@@ -2,9 +2,43 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { usePetTap } from "@/context/pettap-provider";
+import { supabase } from "@/lib/supabase";
+import type { NfcTagStatus } from "@/lib/types";
+
+interface RelatedOwnerRow {
+  id: string;
+  full_name: string;
+  email: string;
+}
+
+interface RelatedPetRow {
+  id: string;
+  name: string;
+}
+
+interface AdminNfcTagRow {
+  id: string;
+  code: string;
+  activation_code: string;
+  owner_id: string | null;
+  pet_id: string | null;
+  status: NfcTagStatus;
+  created_at: string;
+  updated_at: string;
+  owner: RelatedOwnerRow | RelatedOwnerRow[] | null;
+  pet: RelatedPetRow | RelatedPetRow[] | null;
+}
+
+function asSingleRow<T>(value: T | T[] | null | undefined): T | null {
+  if (!value) {
+    return null;
+  }
+
+  return Array.isArray(value) ? value[0] ?? null : value;
+}
 
 export function AdminPanelClient() {
   const router = useRouter();
@@ -20,17 +54,85 @@ export function AdminPanelClient() {
   const [activationCodeInput, setActivationCodeInput] = useState("");
   const [feedback, setFeedback] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [resolvedOwnerPetByTagId, setResolvedOwnerPetByTagId] = useState<
+    Record<string, { ownerName: string | null; ownerEmail: string | null; petName: string | null }>
+  >({});
+
+  const refreshOwnerPetResolution = useCallback(async () => {
+    if (!supabase) {
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("nfc_tags")
+      .select(
+        "id, owner_id, pet_id, owner:owners(id, full_name, email), pet:pets(id, name)",
+      );
+
+    if (error || !data) {
+      return;
+    }
+
+    const nextMap: Record<string, { ownerName: string | null; ownerEmail: string | null; petName: string | null }> =
+      {};
+
+    for (const row of data as AdminNfcTagRow[]) {
+      const ownerRow = asSingleRow(row.owner);
+      const petRow = asSingleRow(row.pet);
+
+      nextMap[row.id] = {
+        ownerName: ownerRow?.full_name ?? null,
+        ownerEmail: ownerRow?.email ?? null,
+        petName: petRow?.name ?? null,
+      };
+    }
+
+    setResolvedOwnerPetByTagId(nextMap);
+  }, []);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      void refreshOwnerPetResolution();
+    }, 0);
+
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [refreshOwnerPetResolution, state.nfcTags.length, state.owners.length, state.pets.length]);
 
   const tagRows = useMemo(
     () =>
       [...state.nfcTags].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map((tag) => {
-        const owner = tag.ownerId
+        const ownerFromState = tag.ownerId
           ? state.owners.find((ownerCandidate) => ownerCandidate.id === tag.ownerId)
           : null;
 
-        const pet = tag.petId
+        const petFromState = tag.petId
           ? state.pets.find((petCandidate) => petCandidate.id === tag.petId)
           : null;
+
+        const resolved = resolvedOwnerPetByTagId[tag.id];
+        const owner = ownerFromState
+          ? {
+              fullName: ownerFromState.fullName,
+              email: ownerFromState.email,
+            }
+          : resolved
+            ? {
+                fullName: resolved.ownerName ?? "Nao vinculado",
+                email: resolved.ownerEmail ?? "",
+              }
+            : null;
+
+        const pet = petFromState
+          ? {
+              name: petFromState.name,
+            }
+          : resolved
+            ? {
+                name: resolved.petName ?? "Sem pet",
+              }
+            : null;
 
         return {
           tag,
@@ -38,7 +140,7 @@ export function AdminPanelClient() {
           pet,
         };
       }),
-    [state.nfcTags, state.owners, state.pets],
+    [resolvedOwnerPetByTagId, state.nfcTags, state.owners, state.pets],
   );
 
   const baseUrl =
@@ -67,6 +169,7 @@ export function AdminPanelClient() {
     setFeedback(
       `Tag ${result.tag?.code ?? ""} criada com sucesso. Link NFC: ${baseUrl}/t/${result.tag?.code}`,
     );
+    void refreshOwnerPetResolution();
   }
 
   async function handleCopy(link: string) {
@@ -93,7 +196,7 @@ export function AdminPanelClient() {
               Controle de Tags NFC
             </h1>
             <p className="mt-2 text-sm text-zinc-300">
-              Crie tags, gere links de gravacao NFC e monitore vinculos com chave de ativacao.
+              Crie Codigos NFC, gere links de gravacao e monitore vinculos por Chave de Ativacao.
             </p>
           </div>
 
@@ -113,7 +216,7 @@ export function AdminPanelClient() {
         <form className="mt-4 grid gap-4 sm:grid-cols-2" onSubmit={handleCreateTag}>
           <label className="grid gap-2 text-sm text-zinc-300">
             <span className="text-xs uppercase tracking-[0.14em] text-zinc-400">
-              Codigo da tag (opcional)
+              Codigo NFC (opcional)
             </span>
             <input
               type="text"
@@ -126,7 +229,7 @@ export function AdminPanelClient() {
 
           <label className="grid gap-2 text-sm text-zinc-300">
             <span className="text-xs uppercase tracking-[0.14em] text-zinc-400">
-              Chave de ativacao (opcional)
+              Chave de Ativacao (cadastro) (opcional)
             </span>
             <input
               type="text"
@@ -153,16 +256,16 @@ export function AdminPanelClient() {
       <section className="rounded-3xl border border-white/10 bg-white/5 p-5 backdrop-blur sm:p-6">
         <h2 className="text-xl font-semibold tracking-tight text-white">Tags NFC cadastradas</h2>
         <p className="mt-2 text-sm text-zinc-300">
-          Grave na tag fisica o link `NFC Link` e entregue a chave de ativacao para o tutor.
+          Grave na tag fisica o link `NFC Link` e entregue a Chave de Ativacao para o tutor.
         </p>
 
         <div className="mt-4 overflow-x-auto">
           <table className="min-w-full text-left text-sm text-zinc-300">
             <thead className="text-xs uppercase tracking-[0.14em] text-zinc-400">
               <tr>
-                <th className="px-3 py-2">Codigo</th>
+                <th className="px-3 py-2">Codigo NFC</th>
                 <th className="px-3 py-2">Status</th>
-                <th className="px-3 py-2">Chave ativacao</th>
+                <th className="px-3 py-2">Chave de Ativacao</th>
                 <th className="px-3 py-2">Tutor/Pet</th>
                 <th className="px-3 py-2">NFC Link</th>
                 <th className="px-3 py-2">Acoes</th>
@@ -179,6 +282,7 @@ export function AdminPanelClient() {
                     <td className="px-3 py-3 font-mono text-xs">{tag.activationCode}</td>
                     <td className="px-3 py-3">
                       <p>{owner?.fullName ?? "Nao vinculado"}</p>
+                      <p className="text-xs text-zinc-500">{owner?.email ?? "Sem e-mail"}</p>
                       <p className="text-xs text-zinc-400">{pet?.name ?? "Sem pet"}</p>
                     </td>
                     <td className="px-3 py-3">
@@ -207,6 +311,9 @@ export function AdminPanelClient() {
                             const nextStatus = tag.status === "disabled" ? "active" : "disabled";
                             const result = await setNfcTagStatus(tag.id, nextStatus);
                             setFeedback(result.ok ? `Status da tag ${tag.code} atualizado.` : result.message ?? "Falha ao atualizar status.");
+                            if (result.ok) {
+                              void refreshOwnerPetResolution();
+                            }
                           }}
                           className="rounded-full border border-white/15 px-3 py-1 text-xs uppercase tracking-[0.12em]"
                         >
@@ -217,6 +324,9 @@ export function AdminPanelClient() {
                           onClick={async () => {
                             const result = await unlinkNfcTag(tag.id);
                             setFeedback(result.ok ? `Tag ${tag.code} desvinculada.` : result.message ?? "Falha ao desvincular.");
+                            if (result.ok) {
+                              void refreshOwnerPetResolution();
+                            }
                           }}
                           className="rounded-full border border-rose-300/40 bg-rose-500/10 px-3 py-1 text-xs uppercase tracking-[0.12em] text-rose-100"
                         >

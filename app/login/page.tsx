@@ -240,7 +240,7 @@ export default function LoginPage() {
         {tab === "register" && (
           <label className="grid gap-2 text-sm text-zinc-300">
             <span className="text-xs uppercase tracking-[0.14em] text-zinc-400">
-              Chave de ativacao NFC
+              Chave de Ativacao (cadastro)
             </span>
             <input
               type="text"

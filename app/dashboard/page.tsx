@@ -48,7 +48,7 @@ export default function DashboardPage() {
     const normalized = tagCodeInput.trim().toUpperCase();
 
     if (!normalized) {
-      setActivationFeedback("Informe o codigo da tag (ex: PTBR-NFC-010).");
+      setActivationFeedback("Informe o Codigo NFC da tag (ex: PTBR-NFC-010).");
       return;
     }
 
@@ -109,11 +109,13 @@ export default function DashboardPage() {
         </div>
       </section>
 
-      <section className="rounded-3xl border border-cyan-300/25 bg-cyan-500/10 p-5 backdrop-blur sm:p-6">
+      <section
+        id="ativar-tag"
+        className="rounded-3xl border border-cyan-300/25 bg-cyan-500/10 p-5 backdrop-blur sm:p-6"
+      >
         <h2 className="text-xl font-semibold tracking-tight text-cyan-50">Ativar nova tag NFC</h2>
         <p className="mt-2 text-sm text-cyan-100/90">
-          A vinculacao da tag com o pet e feita pela rota da tag, nao dentro do formulario do pet.
-          Digite o codigo da tag para abrir a tela de ativacao.
+          Use o Codigo NFC para abrir a tela de vinculacao e informe a Chave de Ativacao para concluir.
         </p>
         <div className="mt-4 flex flex-col gap-3 sm:flex-row">
           <input
@@ -192,7 +194,7 @@ export default function DashboardPage() {
               <p className="mt-2 max-h-11 overflow-hidden text-sm text-zinc-300">{pet.bio}</p>
 
               <div className="mt-3 rounded-2xl border border-cyan-300/25 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-100">
-                {tag ? `Tag NFC: ${tag.code}` : "Sem tag NFC vinculada"}
+                {tag ? `Codigo NFC: ${tag.code}` : "Sem tag NFC vinculada"}
               </div>
 
               <div className="mt-4 grid grid-cols-2 gap-2">
@@ -219,9 +221,12 @@ export default function DashboardPage() {
                     Abrir link NFC
                   </Link>
                 ) : (
-                  <p className="col-span-2 rounded-xl border border-dashed border-white/15 px-3 py-2 text-center text-xs text-zinc-400">
-                    Ative uma tag em /t/CODIGO_DA_TAG
-                  </p>
+                  <Link
+                    href="/dashboard#ativar-tag"
+                    className="col-span-2 rounded-xl border border-dashed border-cyan-300/35 bg-cyan-500/10 px-3 py-2 text-center text-xs font-semibold uppercase tracking-[0.14em] text-cyan-100 transition hover:bg-cyan-500/20"
+                  >
+                    Vincular Tag NFC
+                  </Link>
                 )}
               </div>
 
@@ -275,7 +280,7 @@ export default function DashboardPage() {
           <table className="min-w-full text-left text-sm text-zinc-300">
             <thead className="text-xs uppercase tracking-[0.14em] text-zinc-400">
               <tr>
-                <th className="px-3 py-2">Tag</th>
+                <th className="px-3 py-2">Codigo NFC</th>
                 <th className="px-3 py-2">Status</th>
                 <th className="px-3 py-2">Pet</th>
                 <th className="px-3 py-2">Acesso</th>

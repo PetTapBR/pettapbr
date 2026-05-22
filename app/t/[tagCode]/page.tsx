@@ -362,7 +362,7 @@ export default function PublicNfcTagPage() {
     }
 
     if (!activationCode.trim()) {
-      setFeedback("Informe o codigo de ativacao da tag.");
+      setFeedback("Informe a Chave de Ativacao da tag.");
       return;
     }
 
@@ -394,7 +394,7 @@ export default function PublicNfcTagPage() {
     return (
       <section className="mx-auto w-full max-w-3xl rounded-3xl border border-white/10 bg-white/5 p-8 text-center text-zinc-200">
         <h1 className="text-3xl font-semibold text-white">Tag NFC nao encontrada</h1>
-        <p className="mt-3 text-sm text-zinc-400">Verifique o codigo da tag e tente novamente.</p>
+        <p className="mt-3 text-sm text-zinc-400">Verifique o Codigo NFC da tag e tente novamente.</p>
         <Link
           href="/"
           className="mt-5 inline-flex rounded-full bg-white px-6 py-3 text-sm font-semibold uppercase tracking-[0.14em] text-zinc-950"
@@ -473,12 +473,12 @@ export default function PublicNfcTagPage() {
       <p className="text-xs uppercase tracking-[0.16em] text-zinc-400">Ativacao de tag NFC</p>
       <h1 className="mt-2 text-3xl font-semibold tracking-tight text-white">Vincular tag {tag.code}</h1>
       <p className="mt-3 text-sm text-zinc-300">
-        Informe o codigo de ativacao da tag e selecione o pet que recebera esta identificacao NFC.
+        Informe a Chave de Ativacao e selecione o pet que recebera este Codigo NFC.
       </p>
 
       <form className="mt-6 grid gap-4" onSubmit={handleActivate}>
         <label className="grid gap-2 text-sm text-zinc-300">
-          <span className="text-xs uppercase tracking-[0.14em] text-zinc-400">Codigo de ativacao</span>
+          <span className="text-xs uppercase tracking-[0.14em] text-zinc-400">Chave de Ativacao</span>
           <input
             type="text"
             value={activationCode}
