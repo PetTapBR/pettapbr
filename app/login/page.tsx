@@ -28,6 +28,7 @@ export default function LoginPage() {
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [activationCode, setActivationCode] = useState("");
   const [feedback, setFeedback] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -147,8 +148,13 @@ export default function LoginPage() {
       return;
     }
 
+    if (!activationCode.trim()) {
+      setFeedback("Informe a chave de ativacao enviada com sua tag NFC.");
+      return;
+    }
+
     setIsSubmitting(true);
-    const result = await register(fullName, email, password);
+    const result = await register(fullName, email, password, activationCode);
     setIsSubmitting(false);
     if (!result.ok) {
       setFeedback(result.message ?? "Falha no cadastro.");
@@ -230,6 +236,21 @@ export default function LoginPage() {
             className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition focus:border-cyan-300/60 focus:bg-white/10"
           />
         </label>
+
+        {tab === "register" && (
+          <label className="grid gap-2 text-sm text-zinc-300">
+            <span className="text-xs uppercase tracking-[0.14em] text-zinc-400">
+              Chave de ativacao NFC
+            </span>
+            <input
+              type="text"
+              value={activationCode}
+              onChange={(event) => setActivationCode(event.target.value.toUpperCase())}
+              placeholder="Ex: ACT-9021"
+              className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition placeholder:text-zinc-500 focus:border-cyan-300/60 focus:bg-white/10"
+            />
+          </label>
+        )}
 
         <p className="text-sm text-zinc-400">{feedback}</p>
 

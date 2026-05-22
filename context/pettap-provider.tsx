@@ -43,7 +43,7 @@ interface PetTapContextValue {
   unreadNotifications: AccessNotification[];
   ownerScanEvents: ScanEvent[];
   login: (email: string, password: string) => Promise<AuthResult>;
-  register: (fullName: string, email: string, password: string) => Promise<AuthResult>;
+  register: (fullName: string, email: string, password: string, activationCode: string) => Promise<AuthResult>;
   logout: () => void;
   addPet: (payload: PetFormSubmission) => Promise<{ ok: boolean; petId?: string; message?: string }>;
   updatePet: (petId: string, payload: PetFormSubmission) => Promise<AuthResult>;
@@ -80,6 +80,34 @@ function ensureUniqueSlug(desired: string, pets: Pet[], currentPetId?: string) {
 
 function generateActivationCode() {
   return `ACT-${Math.floor(1000 + Math.random() * 9000)}`;
+}
+
+function normalizeActivationCode(value: string | undefined) {
+  return (value ?? "").trim().toUpperCase();
+}
+
+interface NfcTagRow {
+  id: string;
+  code: string;
+  activation_code: string;
+  owner_id: string | null;
+  pet_id: string | null;
+  status: NfcTagStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+function mapNfcTagRow(row: NfcTagRow): NfcTag {
+  return {
+    id: row.id,
+    code: row.code,
+    activationCode: normalizeActivationCode(row.activation_code),
+    ownerId: row.owner_id,
+    petId: row.pet_id,
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }
 
 function ensureUniqueTagCode(desiredCode: string | undefined, tags: NfcTag[]) {
@@ -364,8 +392,21 @@ function usePetTapValue() {
   );
 
   const register = useCallback(
-    async (fullName: string, email: string, password: string): Promise<AuthResult> => {
+    async (
+      fullName: string,
+      email: string,
+      password: string,
+      activationCodeInput: string,
+    ): Promise<AuthResult> => {
       const normalized = email.trim().toLowerCase();
+      const activationCode = normalizeActivationCode(activationCodeInput);
+
+      if (!activationCode) {
+        return {
+          ok: false,
+          message: "Informe a chave de ativacao enviada com a tag NFC.",
+        };
+      }
 
       const supabaseErrorMessage = requireSupabaseConfigured();
       if (supabaseErrorMessage) {
@@ -399,6 +440,49 @@ function usePetTapValue() {
         return {
           ok: false,
           message: "Este e-mail ja esta cadastrado.",
+        };
+      }
+
+      const { data: tagRows, error: tagLookupError } = await supabase
+        .from("nfc_tags")
+        .select("id, code, activation_code, owner_id, pet_id, status, created_at, updated_at")
+        .eq("activation_code", activationCode)
+        .limit(2);
+
+      if (tagLookupError) {
+        return {
+          ok: false,
+          message: tagLookupError.message || "Falha ao validar chave de ativacao.",
+        };
+      }
+
+      if (!tagRows || tagRows.length === 0) {
+        return {
+          ok: false,
+          message: "Chave de ativacao invalida.",
+        };
+      }
+
+      if (tagRows.length > 1) {
+        return {
+          ok: false,
+          message: "Chave de ativacao duplicada. Contate o suporte para regularizar esta tag.",
+        };
+      }
+
+      const selectedTag = tagRows[0] as NfcTagRow;
+
+      if (selectedTag.status === "disabled") {
+        return {
+          ok: false,
+          message: "Esta tag esta desativada. Contate o suporte.",
+        };
+      }
+
+      if (selectedTag.owner_id) {
+        return {
+          ok: false,
+          message: "Esta chave de ativacao ja foi utilizada.",
         };
       }
 
@@ -448,6 +532,35 @@ function usePetTapValue() {
         };
       }
 
+      const tagUpdatedAt = new Date().toISOString();
+      const { data: claimedRows, error: claimError } = await supabase
+        .from("nfc_tags")
+        .update({
+          owner_id: newOwner.id,
+          updated_at: tagUpdatedAt,
+        })
+        .eq("id", selectedTag.id)
+        .is("owner_id", null)
+        .select("id, code, activation_code, owner_id, pet_id, status, created_at, updated_at")
+        .limit(1);
+
+      if (claimError) {
+        return {
+          ok: false,
+          message: claimError.message || "Conta criada, mas falhou ao vincular a chave de ativacao.",
+        };
+      }
+
+      if (!claimedRows || claimedRows.length === 0) {
+        return {
+          ok: false,
+          message:
+            "Esta chave de ativacao acabou de ser utilizada por outra conta. Tente outra chave.",
+        };
+      }
+
+      const linkedTag = mapNfcTagRow(claimedRows[0] as NfcTagRow);
+
       const isConfirmed = Boolean(signUpData.session);
 
       setState((prev) => ({
@@ -455,6 +568,9 @@ function usePetTapValue() {
         owners: prev.owners.some((owner) => owner.id === newOwner.id)
           ? prev.owners.map((owner) => (owner.id === newOwner.id ? newOwner : owner))
           : [...prev.owners, newOwner],
+        nfcTags: prev.nfcTags.some((tag) => tag.id === linkedTag.id)
+          ? prev.nfcTags.map((tag) => (tag.id === linkedTag.id ? linkedTag : tag))
+          : [linkedTag, ...prev.nfcTags],
         sessionOwnerId: isConfirmed ? newOwner.id : prev.sessionOwnerId,
       }));
 
@@ -462,11 +578,12 @@ function usePetTapValue() {
         return {
           ok: true,
           requiresEmailConfirmation: true,
-          message: "Conta criada. Verifique seu e-mail para confirmar antes de entrar.",
+          message:
+            "Conta criada e chave vinculada. Verifique seu e-mail para confirmar antes de entrar.",
         };
       }
 
-      return { ok: true, message: "Conta criada com sucesso." };
+      return { ok: true, message: "Conta criada com sucesso e chave NFC vinculada." };
     },
     [],
   );
@@ -812,7 +929,7 @@ function usePetTapValue() {
       }
 
       const normalizedTagCode = normalizeTagCode(payload.tagCode);
-      const activationCode = payload.activationCode.trim();
+      const activationCode = normalizeActivationCode(payload.activationCode);
 
       const tag = state.nfcTags.find((item) => item.code === normalizedTagCode);
       if (!tag) {
@@ -829,7 +946,7 @@ function usePetTapValue() {
         };
       }
 
-      if (tag.activationCode !== activationCode) {
+      if (normalizeActivationCode(tag.activationCode) !== activationCode) {
         return {
           ok: false,
           message: "Codigo de ativacao invalido.",
@@ -928,7 +1045,66 @@ function usePetTapValue() {
         };
       }
 
-      const activationCode = payload.activationCode?.trim() || generateActivationCode();
+      const activationCode = normalizeActivationCode(payload.activationCode) || generateActivationCode();
+
+      if (
+        state.nfcTags.some(
+          (tag) => normalizeActivationCode(tag.activationCode) === normalizeActivationCode(activationCode),
+        )
+      ) {
+        return {
+          ok: false,
+          message: "Ja existe uma tag com esta chave de ativacao.",
+        };
+      }
+
+      if (!supabase) {
+        return {
+          ok: false,
+          message: "Supabase indisponivel no momento.",
+        };
+      }
+
+      const { data: existingCodeRows, error: existingCodeError } = await supabase
+        .from("nfc_tags")
+        .select("id")
+        .eq("code", code)
+        .limit(1);
+
+      if (existingCodeError) {
+        return {
+          ok: false,
+          message: existingCodeError.message || "Falha ao validar codigo da tag.",
+        };
+      }
+
+      if ((existingCodeRows ?? []).length > 0) {
+        return {
+          ok: false,
+          message: "Ja existe uma tag com este codigo.",
+        };
+      }
+
+      const { data: existingActivationRows, error: existingActivationError } = await supabase
+        .from("nfc_tags")
+        .select("id")
+        .eq("activation_code", activationCode)
+        .limit(1);
+
+      if (existingActivationError) {
+        return {
+          ok: false,
+          message: existingActivationError.message || "Falha ao validar chave de ativacao.",
+        };
+      }
+
+      if ((existingActivationRows ?? []).length > 0) {
+        return {
+          ok: false,
+          message: "Ja existe uma tag com esta chave de ativacao.",
+        };
+      }
+
       const now = new Date().toISOString();
       const tag: NfcTag = {
         id: createId("tag"),
