@@ -110,6 +110,28 @@ function mapNfcTagRow(row: NfcTagRow): NfcTag {
   };
 }
 
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof (error as { message?: unknown }).message === "string"
+  ) {
+    return (error as { message: string }).message;
+  }
+
+  return "";
+}
+
+function isDuplicateCodeError(error: unknown) {
+  const message = getErrorMessage(error).toLowerCase();
+  return message.includes("duplicate key value") && message.includes("nfc_tags_code_key");
+}
+
 function generateNextTagCode(usedCodes: Set<string>) {
   let counter = 1;
   let candidate = `PTBR-NFC-${String(counter).padStart(3, "0")}`;
@@ -1079,121 +1101,160 @@ function usePetTapValue() {
       }
 
       const requestedCode = normalizeTagCode(payload.code ?? "");
-      let code = requestedCode;
+      const requestedActivationCode = normalizeActivationCode(payload.activationCode);
+      const maxAttempts = requestedCode ? 1 : 10;
 
-      if (!requestedCode) {
-        const { data: existingTagCodeRows, error: existingTagCodeError } = await supabase
-          .from("nfc_tags")
-          .select("code");
+      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        let code = requestedCode;
 
-        if (existingTagCodeError) {
+        if (!requestedCode) {
+          const { data: existingTagCodeRows, error: existingTagCodeError } = await supabase
+            .from("nfc_tags")
+            .select("code");
+
+          if (existingTagCodeError) {
+            return {
+              ok: false,
+              message: existingTagCodeError.message || "Falha ao listar codigos de tags existentes.",
+            };
+          }
+
+          const usedCodes = new Set<string>(state.nfcTags.map((tag) => tag.code));
+
+          for (const row of existingTagCodeRows ?? []) {
+            const codeFromRow = normalizeTagCode((row as { code?: string }).code ?? "");
+            if (codeFromRow) {
+              usedCodes.add(codeFromRow);
+            }
+          }
+
+          code = generateNextTagCode(usedCodes);
+        }
+
+        if (state.nfcTags.some((tag) => tag.code === code)) {
+          if (!requestedCode) {
+            continue;
+          }
+
           return {
             ok: false,
-            message: existingTagCodeError.message || "Falha ao listar codigos de tags existentes.",
+            message: "Ja existe uma tag com este codigo.",
           };
         }
 
-        const usedCodes = new Set<string>(state.nfcTags.map((tag) => tag.code));
+        const activationCode = requestedActivationCode || generateActivationCode();
 
-        for (const row of existingTagCodeRows ?? []) {
-          const codeFromRow = normalizeTagCode((row as { code?: string }).code ?? "");
-          if (codeFromRow) {
-            usedCodes.add(codeFromRow);
+        if (
+          state.nfcTags.some(
+            (tag) =>
+              normalizeActivationCode(tag.activationCode) ===
+              normalizeActivationCode(activationCode),
+          )
+        ) {
+          if (!requestedActivationCode) {
+            continue;
           }
+
+          return {
+            ok: false,
+            message: "Ja existe uma tag com esta chave de ativacao.",
+          };
         }
 
-        code = generateNextTagCode(usedCodes);
-      }
+        const { data: existingCodeRows, error: existingCodeError } = await supabase
+          .from("nfc_tags")
+          .select("id")
+          .eq("code", code)
+          .limit(1);
 
-      if (state.nfcTags.some((tag) => tag.code === code)) {
-        return {
-          ok: false,
-          message: "Ja existe uma tag com este codigo.",
+        if (existingCodeError) {
+          return {
+            ok: false,
+            message: existingCodeError.message || "Falha ao validar codigo da tag.",
+          };
+        }
+
+        if ((existingCodeRows ?? []).length > 0) {
+          if (!requestedCode) {
+            continue;
+          }
+
+          return {
+            ok: false,
+            message: "Ja existe uma tag com este codigo.",
+          };
+        }
+
+        const { data: existingActivationRows, error: existingActivationError } = await supabase
+          .from("nfc_tags")
+          .select("id")
+          .eq("activation_code", activationCode)
+          .limit(1);
+
+        if (existingActivationError) {
+          return {
+            ok: false,
+            message: existingActivationError.message || "Falha ao validar chave de ativacao.",
+          };
+        }
+
+        if ((existingActivationRows ?? []).length > 0) {
+          if (!requestedActivationCode) {
+            continue;
+          }
+
+          return {
+            ok: false,
+            message: "Ja existe uma tag com esta chave de ativacao.",
+          };
+        }
+
+        const now = new Date().toISOString();
+        const tag: NfcTag = {
+          id: createId("tag"),
+          code,
+          activationCode,
+          ownerId: null,
+          petId: null,
+          status: "unlinked",
+          createdAt: now,
+          updatedAt: now,
         };
+
+        try {
+          await syncNfcTagWithSupabase(tag);
+          setState((prev) => ({
+            ...prev,
+            nfcTags: [tag, ...prev.nfcTags],
+          }));
+
+          return {
+            ok: true,
+            tag,
+          };
+        } catch (error) {
+          if (isDuplicateCodeError(error) && !requestedCode) {
+            continue;
+          }
+
+          if (isDuplicateCodeError(error)) {
+            return {
+              ok: false,
+              message: "Ja existe uma tag com este codigo.",
+            };
+          }
+
+          return {
+            ok: false,
+            message: getErrorMessage(error) || "Falha ao criar tag NFC.",
+          };
+        }
       }
 
-      const activationCode = normalizeActivationCode(payload.activationCode) || generateActivationCode();
-
-      if (
-        state.nfcTags.some(
-          (tag) => normalizeActivationCode(tag.activationCode) === normalizeActivationCode(activationCode),
-        )
-      ) {
-        return {
-          ok: false,
-          message: "Ja existe uma tag com esta chave de ativacao.",
-        };
-      }
-
-      const { data: existingCodeRows, error: existingCodeError } = await supabase
-        .from("nfc_tags")
-        .select("id")
-        .eq("code", code)
-        .limit(1);
-
-      if (existingCodeError) {
-        return {
-          ok: false,
-          message: existingCodeError.message || "Falha ao validar codigo da tag.",
-        };
-      }
-
-      if ((existingCodeRows ?? []).length > 0) {
-        return {
-          ok: false,
-          message: "Ja existe uma tag com este codigo.",
-        };
-      }
-
-      const { data: existingActivationRows, error: existingActivationError } = await supabase
-        .from("nfc_tags")
-        .select("id")
-        .eq("activation_code", activationCode)
-        .limit(1);
-
-      if (existingActivationError) {
-        return {
-          ok: false,
-          message: existingActivationError.message || "Falha ao validar chave de ativacao.",
-        };
-      }
-
-      if ((existingActivationRows ?? []).length > 0) {
-        return {
-          ok: false,
-          message: "Ja existe uma tag com esta chave de ativacao.",
-        };
-      }
-
-      const now = new Date().toISOString();
-      const tag: NfcTag = {
-        id: createId("tag"),
-        code,
-        activationCode,
-        ownerId: null,
-        petId: null,
-        status: "unlinked",
-        createdAt: now,
-        updatedAt: now,
+      return {
+        ok: false,
+        message: "Nao foi possivel gerar um codigo NFC unico. Tente novamente.",
       };
-
-      try {
-        await syncNfcTagWithSupabase(tag);
-        setState((prev) => ({
-          ...prev,
-          nfcTags: [tag, ...prev.nfcTags],
-        }));
-
-        return {
-          ok: true,
-          tag,
-        };
-      } catch (error) {
-        return {
-          ok: false,
-          message: error instanceof Error ? error.message : "Falha ao criar tag NFC.",
-        };
-      }
     },
     [state.nfcTags],
   );
