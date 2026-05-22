@@ -110,22 +110,16 @@ function mapNfcTagRow(row: NfcTagRow): NfcTag {
   };
 }
 
-function ensureUniqueTagCode(desiredCode: string | undefined, tags: NfcTag[]) {
-  const normalized = normalizeTagCode(desiredCode ?? "");
+function generateNextTagCode(usedCodes: Set<string>) {
+  let counter = 1;
+  let candidate = `PTBR-NFC-${String(counter).padStart(3, "0")}`;
 
-  if (normalized) {
-    return normalized;
-  }
-
-  let counter = tags.length + 1;
-  let code = `PTBR-NFC-${String(counter).padStart(3, "0")}`;
-
-  while (tags.some((tag) => tag.code === code)) {
+  while (usedCodes.has(candidate)) {
     counter += 1;
-    code = `PTBR-NFC-${String(counter).padStart(3, "0")}`;
+    candidate = `PTBR-NFC-${String(counter).padStart(3, "0")}`;
   }
 
-  return code;
+  return candidate;
 }
 
 function requireSupabaseConfigured() {
@@ -265,6 +259,46 @@ function usePetTapValue() {
 
     persistState(state);
   }, [isReady, state]);
+
+  useEffect(() => {
+    if (!isReady || !supabase) {
+      return;
+    }
+
+    const supabaseClient = supabase;
+    let isMounted = true;
+
+    async function hydrateTagsFromSupabase() {
+      const { data, error } = await supabaseClient
+        .from("nfc_tags")
+        .select("id, code, activation_code, owner_id, pet_id, status, created_at, updated_at");
+
+      if (!isMounted || error || !data) {
+        return;
+      }
+
+      const remoteTags = data.map((row) => mapNfcTagRow(row as NfcTagRow));
+
+      setState((prev) => {
+        const mergedById = new Map(prev.nfcTags.map((tag) => [tag.id, tag]));
+
+        for (const tag of remoteTags) {
+          mergedById.set(tag.id, tag);
+        }
+
+        return {
+          ...prev,
+          nfcTags: Array.from(mergedById.values()),
+        };
+      });
+    }
+
+    void hydrateTagsFromSupabase();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isReady]);
 
   const currentOwner = useMemo(
     () => state.owners.find((owner) => owner.id === state.sessionOwnerId) ?? null,
@@ -1037,7 +1071,40 @@ function usePetTapValue() {
         };
       }
 
-      const code = ensureUniqueTagCode(payload.code, state.nfcTags);
+      if (!supabase) {
+        return {
+          ok: false,
+          message: "Supabase indisponivel no momento.",
+        };
+      }
+
+      const requestedCode = normalizeTagCode(payload.code ?? "");
+      let code = requestedCode;
+
+      if (!requestedCode) {
+        const { data: existingTagCodeRows, error: existingTagCodeError } = await supabase
+          .from("nfc_tags")
+          .select("code");
+
+        if (existingTagCodeError) {
+          return {
+            ok: false,
+            message: existingTagCodeError.message || "Falha ao listar codigos de tags existentes.",
+          };
+        }
+
+        const usedCodes = new Set<string>(state.nfcTags.map((tag) => tag.code));
+
+        for (const row of existingTagCodeRows ?? []) {
+          const codeFromRow = normalizeTagCode((row as { code?: string }).code ?? "");
+          if (codeFromRow) {
+            usedCodes.add(codeFromRow);
+          }
+        }
+
+        code = generateNextTagCode(usedCodes);
+      }
+
       if (state.nfcTags.some((tag) => tag.code === code)) {
         return {
           ok: false,
@@ -1055,13 +1122,6 @@ function usePetTapValue() {
         return {
           ok: false,
           message: "Ja existe uma tag com esta chave de ativacao.",
-        };
-      }
-
-      if (!supabase) {
-        return {
-          ok: false,
-          message: "Supabase indisponivel no momento.",
         };
       }
 
