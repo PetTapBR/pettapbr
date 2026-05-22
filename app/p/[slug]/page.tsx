@@ -7,6 +7,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { PetPublicProfile } from "@/components/pet-public-profile";
 import { usePetTap } from "@/context/pettap-provider";
 import { formatViewerGpsLocation, reverseGeocodeLabel } from "@/lib/geocode-client";
+import { supabase } from "@/lib/supabase";
 import type { ScanSource } from "@/lib/types";
 
 function parseSource(raw: string | null): ScanSource {
@@ -17,11 +18,16 @@ function parseSource(raw: string | null): ScanSource {
   return "direct";
 }
 
+interface OwnerRow {
+  id: string;
+  full_name: string;
+}
+
 export default function PublicPetPage() {
   const params = useParams<{ slug: string }>();
   const searchParams = useSearchParams();
 
-  const { isReady, getPetBySlug, recordScan } = usePetTap();
+  const { isReady, state, getPetBySlug, recordScan } = usePetTap();
 
   const slug = params.slug;
   const source = parseSource(searchParams.get("source"));
@@ -29,11 +35,65 @@ export default function PublicPetPage() {
 
   const [detectedLocation, setDetectedLocation] = useState("");
   const [detectedLocationReady, setDetectedLocationReady] = useState(false);
+  const [remoteOwnerNameResult, setRemoteOwnerNameResult] = useState<{ ownerId: string; name: string } | null>(
+    null,
+  );
   const location = manualLocation ?? detectedLocation;
   const locationReady = manualLocation ? true : detectedLocationReady;
 
   const pet = useMemo(() => getPetBySlug(slug), [getPetBySlug, slug]);
+  const localOwnerName = pet?.ownerId ? (state.owners.find((owner) => owner.id === pet.ownerId)?.fullName ?? "") : "";
+  const remoteOwnerName =
+    pet?.ownerId && remoteOwnerNameResult?.ownerId === pet.ownerId ? remoteOwnerNameResult.name : "";
+  const ownerName = localOwnerName || remoteOwnerName || "Tutor";
   const recordedRef = useRef<string>("");
+
+  useEffect(() => {
+    if (!pet?.ownerId || localOwnerName || !supabase) {
+      return;
+    }
+
+    if (remoteOwnerNameResult?.ownerId === pet.ownerId) {
+      return;
+    }
+
+    const supabaseClient = supabase;
+    const ownerId = pet.ownerId;
+    let isMounted = true;
+
+    async function fetchOwnerName() {
+      const { data, error } = await supabaseClient
+        .from("owners")
+        .select("id, full_name")
+        .eq("id", ownerId)
+        .limit(1);
+
+      if (!isMounted) {
+        return;
+      }
+
+      if (error) {
+        return;
+      }
+
+      const row = (data?.[0] ?? null) as OwnerRow | null;
+
+      if (!row) {
+        return;
+      }
+
+      setRemoteOwnerNameResult({
+        ownerId: row.id,
+        name: row.full_name || "Tutor",
+      });
+    }
+
+    void fetchOwnerName();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [localOwnerName, pet?.ownerId, remoteOwnerNameResult?.ownerId]);
 
   useEffect(() => {
     if (manualLocation) {
@@ -139,7 +199,7 @@ export default function PublicPetPage() {
       <div className="mb-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-xs uppercase tracking-[0.16em] text-zinc-300">
         Acesso detectado por {source.toUpperCase()} | Local: {locationReady ? location : "Localizando..."}
       </div>
-      <PetPublicProfile pet={pet} />
+      <PetPublicProfile pet={pet} ownerName={ownerName} />
     </div>
   );
 }

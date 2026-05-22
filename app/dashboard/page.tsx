@@ -2,16 +2,14 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 
 import { StatusPill } from "@/components/status-pill";
 import { usePetTap } from "@/context/pettap-provider";
-import { formatDateTime } from "@/lib/utils";
+import { formatDateTime, normalizeTagCode } from "@/lib/utils";
 
 export default function DashboardPage() {
   const router = useRouter();
-  const [tagCodeInput, setTagCodeInput] = useState("");
-  const [activationFeedback, setActivationFeedback] = useState("");
   const {
     isReady,
     currentOwner,
@@ -44,16 +42,15 @@ export default function DashboardPage() {
   const totalScans = ownerScanEvents.length;
   const nfcScans = ownerScanEvents.filter((event) => event.source === "nfc").length;
 
-  function openActivationFlow() {
-    const normalized = tagCodeInput.trim().toUpperCase();
+  function openNfcLinkFlow(petId: string) {
+    const input = window.prompt("Digite o Codigo NFC da tag (ex: PTBR-NFC-010).") ?? "";
+    const normalized = normalizeTagCode(input);
 
     if (!normalized) {
-      setActivationFeedback("Informe o Codigo NFC da tag (ex: PTBR-NFC-010).");
       return;
     }
 
-    setActivationFeedback("");
-    router.push(`/t/${encodeURIComponent(normalized)}`);
+    router.push(`/t/${encodeURIComponent(normalized)}?pet=${encodeURIComponent(petId)}`);
   }
 
   return (
@@ -107,33 +104,6 @@ export default function DashboardPage() {
             {currentOwnerTags.filter((tag) => tag.status === "active").length}
           </p>
         </div>
-      </section>
-
-      <section
-        id="ativar-tag"
-        className="rounded-3xl border border-cyan-300/25 bg-cyan-500/10 p-5 backdrop-blur sm:p-6"
-      >
-        <h2 className="text-xl font-semibold tracking-tight text-cyan-50">Ativar nova tag NFC</h2>
-        <p className="mt-2 text-sm text-cyan-100/90">
-          Use o Codigo NFC para abrir a tela de vinculacao e informe a Chave de Ativacao para concluir.
-        </p>
-        <div className="mt-4 flex flex-col gap-3 sm:flex-row">
-          <input
-            type="text"
-            value={tagCodeInput}
-            onChange={(event) => setTagCodeInput(event.target.value)}
-            placeholder="Ex: PTBR-NFC-010"
-            className="w-full rounded-2xl border border-cyan-200/30 bg-zinc-950/50 px-4 py-3 text-sm text-white outline-none transition placeholder:text-cyan-100/40 focus:border-cyan-200/70"
-          />
-          <button
-            type="button"
-            onClick={openActivationFlow}
-            className="rounded-full bg-white px-6 py-3 text-sm font-semibold uppercase tracking-[0.14em] text-zinc-950 transition hover:bg-cyan-100"
-          >
-            Abrir ativacao
-          </button>
-        </div>
-        <p className="mt-2 text-sm text-cyan-50/80">{activationFeedback}</p>
       </section>
 
       <section className="rounded-3xl border border-white/10 bg-white/5 p-5 backdrop-blur sm:p-6">
@@ -221,12 +191,13 @@ export default function DashboardPage() {
                     Abrir link NFC
                   </Link>
                 ) : (
-                  <Link
-                    href="/dashboard#ativar-tag"
+                  <button
+                    type="button"
+                    onClick={() => openNfcLinkFlow(pet.id)}
                     className="col-span-2 rounded-xl border border-dashed border-cyan-300/35 bg-cyan-500/10 px-3 py-2 text-center text-xs font-semibold uppercase tracking-[0.14em] text-cyan-100 transition hover:bg-cyan-500/20"
                   >
                     Vincular Tag NFC
-                  </Link>
+                  </button>
                 )}
               </div>
 

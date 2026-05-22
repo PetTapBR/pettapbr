@@ -18,7 +18,7 @@ function InfoCard({ title, value }: { title: string; value: string }) {
   );
 }
 
-export function PetPublicProfile({ pet }: { pet: Pet }) {
+export function PetPublicProfile({ pet, ownerName }: { pet: Pet; ownerName?: string }) {
   const [shareFeedback, setShareFeedback] = useState("");
 
   const statusMeta = useMemo(() => getStatusMeta(pet.status), [pet.status]);
@@ -26,34 +26,51 @@ export function PetPublicProfile({ pet }: { pet: Pet }) {
     () => pet.locationUrl || buildGoogleMapsUrl(pet.locationLat, pet.locationLng),
     [pet.locationLat, pet.locationLng, pet.locationUrl],
   );
-  const whatsappUrl = `https://wa.me/${phoneToDigits(pet.whatsapp)}?text=Oi%2C+acabei+de+acessar+o+perfil+do+${encodeURIComponent(pet.name)}.`;
+  const tutorName = (ownerName ?? "Tutor").trim() || "Tutor";
+  const whatsappDigits = phoneToDigits(pet.whatsapp);
+  const whatsappUrl = `https://wa.me/${whatsappDigits}?text=Oi%2C+acabei+de+acessar+o+perfil+do+${encodeURIComponent(pet.name)}.`;
   const callUrl = `tel:${phoneToDigits(pet.phone || pet.whatsapp)}`;
 
   async function shareLocation() {
-    if (!locationUrl) {
-      setShareFeedback("Sem localizacao cadastrada.");
+    if (!whatsappDigits) {
+      setShareFeedback("WhatsApp do tutor nao informado.");
       return;
     }
 
-    const payload = {
-      title: `Localizacao de ${pet.name}`,
-      text: `Confira a localizacao compartilhada de ${pet.name}.`,
-      url: locationUrl,
-    };
+    const fallbackLocationUrl = locationUrl || "";
+    setShareFeedback("Obtendo sua localizacao...");
 
-    if (navigator.share) {
-      try {
-        await navigator.share(payload);
-        setShareFeedback("Localizacao compartilhada.");
-        return;
-      } catch {
-        setShareFeedback("Compartilhamento cancelado.");
+    const currentLocationUrl = await new Promise<string>((resolve) => {
+      if (!navigator.geolocation) {
+        resolve("");
         return;
       }
+
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          resolve(buildGoogleMapsUrl(position.coords.latitude, position.coords.longitude));
+        },
+        () => {
+          resolve("");
+        },
+        {
+          enableHighAccuracy: true,
+          maximumAge: 60000,
+          timeout: 12000,
+        },
+      );
+    });
+
+    const finalLocationUrl = currentLocationUrl || fallbackLocationUrl;
+    if (!finalLocationUrl) {
+      setShareFeedback("Nao foi possivel obter a localizacao para compartilhar.");
+      return;
     }
 
-    window.open(locationUrl, "_blank", "noopener,noreferrer");
-    setShareFeedback("Abrimos a localizacao em nova aba.");
+    const message = `Ola ${tutorName}, encontrei ${pet.name}. Segue a localizacao dele: ${finalLocationUrl}`;
+    const shareUrl = `https://wa.me/${whatsappDigits}?text=${encodeURIComponent(message)}`;
+    window.open(shareUrl, "_blank", "noopener,noreferrer");
+    setShareFeedback("Abrindo WhatsApp com a localizacao.");
   }
 
   const lostMode = pet.status === "lost";

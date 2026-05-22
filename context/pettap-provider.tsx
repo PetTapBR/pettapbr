@@ -985,7 +985,7 @@ function usePetTapValue() {
       }
 
       const normalizedTagCode = normalizeTagCode(payload.tagCode);
-      const activationCode = normalizeActivationCode(payload.activationCode);
+      const providedTagCode = normalizeTagCode(payload.activationCode);
 
       const tag = state.nfcTags.find((item) => item.code === normalizedTagCode);
       if (!tag) {
@@ -1002,10 +1002,17 @@ function usePetTapValue() {
         };
       }
 
-      if (normalizeActivationCode(tag.activationCode) !== activationCode) {
+      if (!providedTagCode) {
         return {
           ok: false,
-          message: "Codigo de ativacao invalido.",
+          message: "Informe o Codigo NFC da tag.",
+        };
+      }
+
+      if (providedTagCode !== normalizedTagCode) {
+        return {
+          ok: false,
+          message: "Codigo NFC informado nao confere com esta tag.",
         };
       }
 

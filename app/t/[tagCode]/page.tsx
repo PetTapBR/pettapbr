@@ -56,6 +56,11 @@ interface PetMediaRow {
   caption: string;
 }
 
+interface OwnerRow {
+  id: string;
+  full_name: string;
+}
+
 function mapTagRow(row: NfcTagRow): NfcTag {
   return {
     id: row.id,
@@ -111,6 +116,7 @@ export default function PublicNfcTagPage() {
 
   const {
     isReady,
+    state,
     currentOwner,
     currentOwnerPets,
     currentOwnerTags,
@@ -120,7 +126,7 @@ export default function PublicNfcTagPage() {
     recordNfcScanByTag,
   } = usePetTap();
 
-  const [activationCode, setActivationCode] = useState("");
+  const [nfcCodeInput, setNfcCodeInput] = useState("");
   const [petId, setPetId] = useState("");
   const [feedback, setFeedback] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -130,9 +136,13 @@ export default function PublicNfcTagPage() {
   const [remotePetResult, setRemotePetResult] = useState<{ petId: string; pet: Pet | null } | null>(
     null,
   );
+  const [remoteOwnerNameResult, setRemoteOwnerNameResult] = useState<{ ownerId: string; name: string } | null>(
+    null,
+  );
 
   const tagCode = normalizeTagCode(params.tagCode);
   const manualLocation = searchParams.get("loc");
+  const preferredPetId = searchParams.get("pet") ?? "";
   const [detectedLocation, setDetectedLocation] = useState("");
   const [detectedLocationReady, setDetectedLocationReady] = useState(false);
   const location = manualLocation ?? detectedLocation;
@@ -171,7 +181,23 @@ export default function PublicNfcTagPage() {
 
     return currentOwnerPets.filter((petOption) => !linkedPetIds.has(petOption.id));
   }, [currentOwnerPets, currentOwnerTags, tag]);
-  const selectedPetId = petId || eligiblePets[0]?.id || "";
+  const selectedPetId = (() => {
+    if (petId && eligiblePets.some((petOption) => petOption.id === petId)) {
+      return petId;
+    }
+
+    if (preferredPetId && eligiblePets.some((petOption) => petOption.id === preferredPetId)) {
+      return preferredPetId;
+    }
+
+    return eligiblePets[0]?.id || "";
+  })();
+
+  const localOwnerName = pet?.ownerId ? (state.owners.find((owner) => owner.id === pet.ownerId)?.fullName ?? "") : "";
+
+  const remoteOwnerName =
+    pet?.ownerId && remoteOwnerNameResult?.ownerId === pet.ownerId ? remoteOwnerNameResult.name : "";
+  const ownerName = localOwnerName || remoteOwnerName || "Tutor";
 
   const recordedRef = useRef<string>("");
 
@@ -275,6 +301,53 @@ export default function PublicNfcTagPage() {
   }, [isReady, isTagResolved, needsRemotePetLookup, tag?.petId]);
 
   useEffect(() => {
+    if (!pet?.ownerId || localOwnerName || !supabase) {
+      return;
+    }
+
+    if (remoteOwnerNameResult?.ownerId === pet.ownerId) {
+      return;
+    }
+
+    const supabaseClient = supabase;
+    const ownerId = pet.ownerId;
+    let isMounted = true;
+
+    async function fetchOwnerName() {
+      const { data, error } = await supabaseClient
+        .from("owners")
+        .select("id, full_name")
+        .eq("id", ownerId)
+        .limit(1);
+
+      if (!isMounted) {
+        return;
+      }
+
+      if (error) {
+        return;
+      }
+
+      const row = (data?.[0] ?? null) as OwnerRow | null;
+
+      if (!row) {
+        return;
+      }
+
+      setRemoteOwnerNameResult({
+        ownerId: row.id,
+        name: row.full_name || "Tutor",
+      });
+    }
+
+    void fetchOwnerName();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [localOwnerName, pet?.ownerId, remoteOwnerNameResult?.ownerId]);
+
+  useEffect(() => {
     if (!pet) {
       return;
     }
@@ -361,15 +434,22 @@ export default function PublicNfcTagPage() {
       return;
     }
 
-    if (!activationCode.trim()) {
-      setFeedback("Informe a Chave de Ativacao da tag.");
+    const normalizedInputCode = normalizeTagCode(nfcCodeInput);
+
+    if (!normalizedInputCode) {
+      setFeedback("Informe o Codigo NFC da tag.");
+      return;
+    }
+
+    if (normalizedInputCode !== tagCode) {
+      setFeedback("Codigo NFC informado nao confere com esta tag.");
       return;
     }
 
     setIsSubmitting(true);
     const result = await activateNfcTag({
       tagCode,
-      activationCode,
+      activationCode: normalizedInputCode,
       petId: selectedPetId,
     });
     setIsSubmitting(false);
@@ -411,7 +491,7 @@ export default function PublicNfcTagPage() {
         <div className="mb-4 rounded-2xl border border-cyan-300/30 bg-cyan-500/10 px-4 py-3 text-xs uppercase tracking-[0.16em] text-cyan-100">
           Acesso detectado por NFC | Tag: {tag.code} | Local: {locationReady ? location : "Localizando..."}
         </div>
-        <PetPublicProfile pet={pet} />
+        <PetPublicProfile pet={pet} ownerName={ownerName} />
       </div>
     );
   }
@@ -421,16 +501,16 @@ export default function PublicNfcTagPage() {
 
     return (
       <section className="mx-auto w-full max-w-3xl rounded-3xl border border-white/10 bg-white/5 p-8 text-zinc-200 backdrop-blur">
-        <p className="text-xs uppercase tracking-[0.16em] text-zinc-400">Ativacao de tag NFC</p>
+        <p className="text-xs uppercase tracking-[0.16em] text-zinc-400">Vinculacao de tag NFC</p>
         <h1 className="mt-2 text-3xl font-semibold tracking-tight text-white">Tag {tag.code} aguardando vinculacao</h1>
         <p className="mt-3 text-sm text-zinc-300">
-          Esta tag ainda nao esta associada a um pet. Entre na sua conta para ativar e vincular.
+          Esta tag ainda nao esta associada a um pet. Entre na sua conta para concluir a vinculacao.
         </p>
         <Link
           href={`/login?next=${nextUrl}`}
           className="mt-6 inline-flex rounded-full bg-white px-6 py-3 text-sm font-semibold uppercase tracking-[0.14em] text-zinc-950"
         >
-          Entrar para ativar
+          Entrar para vincular
         </Link>
       </section>
     );
@@ -456,7 +536,7 @@ export default function PublicNfcTagPage() {
       <section className="mx-auto w-full max-w-3xl rounded-3xl border border-white/10 bg-white/5 p-8 text-zinc-200 backdrop-blur">
         <h1 className="text-3xl font-semibold tracking-tight text-white">Todos os pets ja possuem tag NFC</h1>
         <p className="mt-3 text-sm text-zinc-300">
-          Para ativar a tag {tag.code}, primeiro desvincule uma tag existente no painel administrativo.
+          Para vincular a tag {tag.code}, primeiro desvincule uma tag existente no painel administrativo.
         </p>
         <Link
           href="/dashboard"
@@ -470,19 +550,20 @@ export default function PublicNfcTagPage() {
 
   return (
     <section className="mx-auto w-full max-w-3xl rounded-3xl border border-white/10 bg-white/5 p-8 text-zinc-200 backdrop-blur">
-      <p className="text-xs uppercase tracking-[0.16em] text-zinc-400">Ativacao de tag NFC</p>
+      <p className="text-xs uppercase tracking-[0.16em] text-zinc-400">Vinculacao de tag NFC</p>
       <h1 className="mt-2 text-3xl font-semibold tracking-tight text-white">Vincular tag {tag.code}</h1>
       <p className="mt-3 text-sm text-zinc-300">
-        Informe a Chave de Ativacao e selecione o pet que recebera este Codigo NFC.
+        Confirme o Codigo NFC da tag e selecione o pet que recebera esta vinculacao.
       </p>
 
       <form className="mt-6 grid gap-4" onSubmit={handleActivate}>
         <label className="grid gap-2 text-sm text-zinc-300">
-          <span className="text-xs uppercase tracking-[0.14em] text-zinc-400">Chave de Ativacao</span>
+          <span className="text-xs uppercase tracking-[0.14em] text-zinc-400">Codigo NFC</span>
           <input
             type="text"
-            value={activationCode}
-            onChange={(event) => setActivationCode(event.target.value)}
+            value={nfcCodeInput}
+            onChange={(event) => setNfcCodeInput(event.target.value)}
+            placeholder={tag.code}
             className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition focus:border-cyan-300/60 focus:bg-white/10"
           />
         </label>
@@ -509,7 +590,7 @@ export default function PublicNfcTagPage() {
           disabled={isSubmitting}
           className="inline-flex w-fit rounded-full bg-white px-6 py-3 text-sm font-semibold uppercase tracking-[0.14em] text-zinc-950 transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-70"
         >
-          {isSubmitting ? "Ativando..." : "Ativar tag NFC"}
+          {isSubmitting ? "Vinculando..." : "Vincular tag NFC"}
         </button>
       </form>
     </section>

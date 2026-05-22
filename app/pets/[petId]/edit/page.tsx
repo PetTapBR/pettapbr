@@ -92,9 +92,9 @@ export default function EditPetPage() {
           </p>
         ) : (
           <p className="mt-2">
-            Este pet ainda nao possui tag NFC. Para vincular, abra a rota{" "}
-            <span className="font-semibold">/t/CODIGO_DA_TAG</span>, informe a chave de ativacao e
-            selecione este pet.
+            Este pet ainda nao possui tag NFC. Para vincular, use o botao{" "}
+            <span className="font-semibold">Vincular Tag NFC</span> no card do pet no dashboard e
+            informe o Codigo NFC da tag.
           </p>
         )}
         <Link
