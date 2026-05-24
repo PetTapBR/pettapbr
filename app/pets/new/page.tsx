@@ -5,6 +5,7 @@ import { useEffect } from "react";
 
 import { PetForm } from "@/components/pet-form";
 import { usePetTap } from "@/context/pettap-provider";
+import { isOwnerPro } from "@/lib/owner-defaults";
 
 export default function NewPetPage() {
   const router = useRouter();
@@ -29,6 +30,7 @@ export default function NewPetPage() {
       title="Cadastrar novo pet"
       subtitle="Monte o perfil inteligente com contatos, dados medicos e galeria para acesso imediato via NFC."
       submitLabel="Salvar pet"
+      isPremiumPlan={isOwnerPro(currentOwner)}
       onSubmit={async (payload) => {
         const result = await addPet(payload);
 

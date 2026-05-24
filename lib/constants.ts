@@ -2,7 +2,7 @@ import type { PetStatus } from "./types";
 
 export const STATUS_META: Record<PetStatus, { label: string; badgeClass: string; cardClass: string }> = {
   safe: {
-    label: "Seguro",
+    label: "Em Casa",
     badgeClass: "bg-emerald-500/20 text-emerald-200 ring-1 ring-emerald-400/40",
     cardClass: "from-emerald-500/20 via-emerald-500/5 to-transparent",
   },

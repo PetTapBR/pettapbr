@@ -7,6 +7,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { PetPublicProfile } from "@/components/pet-public-profile";
 import { usePetTap } from "@/context/pettap-provider";
 import { formatViewerGpsLocation, reverseGeocodeLabel } from "@/lib/geocode-client";
+import { isOwnerPro } from "@/lib/owner-defaults";
 import { supabase } from "@/lib/supabase";
 import type { NfcTag, NfcTagStatus, Pet } from "@/lib/types";
 import { normalizeTagCode } from "@/lib/utils";
@@ -59,6 +60,8 @@ interface PetMediaRow {
 interface OwnerRow {
   id: string;
   full_name: string;
+  plan_tier: "start" | "pro" | null;
+  plan_status: "active" | "inactive" | null;
 }
 
 function mapTagRow(row: NfcTagRow): NfcTag {
@@ -136,9 +139,11 @@ export default function PublicNfcTagPage() {
   const [remotePetResult, setRemotePetResult] = useState<{ petId: string; pet: Pet | null } | null>(
     null,
   );
-  const [remoteOwnerNameResult, setRemoteOwnerNameResult] = useState<{ ownerId: string; name: string } | null>(
-    null,
-  );
+  const [remoteOwnerResult, setRemoteOwnerResult] = useState<{
+    ownerId: string;
+    name: string;
+    isPremiumPlan: boolean;
+  } | null>(null);
 
   const tagCode = normalizeTagCode(params.tagCode);
   const manualLocation = searchParams.get("loc");
@@ -193,11 +198,15 @@ export default function PublicNfcTagPage() {
     return eligiblePets[0]?.id || "";
   })();
 
-  const localOwnerName = pet?.ownerId ? (state.owners.find((owner) => owner.id === pet.ownerId)?.fullName ?? "") : "";
-
+  const localOwner = pet?.ownerId ? (state.owners.find((owner) => owner.id === pet.ownerId) ?? null) : null;
+  const localOwnerName = localOwner?.fullName ?? "";
+  const localOwnerIsPremium = isOwnerPro(localOwner);
   const remoteOwnerName =
-    pet?.ownerId && remoteOwnerNameResult?.ownerId === pet.ownerId ? remoteOwnerNameResult.name : "";
+    pet?.ownerId && remoteOwnerResult?.ownerId === pet.ownerId ? remoteOwnerResult.name : "";
+  const remoteOwnerIsPremium =
+    pet?.ownerId && remoteOwnerResult?.ownerId === pet.ownerId ? remoteOwnerResult.isPremiumPlan : false;
   const ownerName = localOwnerName || remoteOwnerName || "Tutor";
+  const isPremiumPlan = localOwner ? localOwnerIsPremium : remoteOwnerIsPremium;
 
   const recordedRef = useRef<string>("");
 
@@ -305,7 +314,7 @@ export default function PublicNfcTagPage() {
       return;
     }
 
-    if (remoteOwnerNameResult?.ownerId === pet.ownerId) {
+    if (remoteOwnerResult?.ownerId === pet.ownerId) {
       return;
     }
 
@@ -316,7 +325,7 @@ export default function PublicNfcTagPage() {
     async function fetchOwnerName() {
       const { data, error } = await supabaseClient
         .from("owners")
-        .select("id, full_name")
+        .select("id, full_name, plan_tier, plan_status")
         .eq("id", ownerId)
         .limit(1);
 
@@ -334,9 +343,10 @@ export default function PublicNfcTagPage() {
         return;
       }
 
-      setRemoteOwnerNameResult({
+      setRemoteOwnerResult({
         ownerId: row.id,
         name: row.full_name || "Tutor",
+        isPremiumPlan: row.plan_tier === "pro" && row.plan_status !== "inactive",
       });
     }
 
@@ -345,7 +355,7 @@ export default function PublicNfcTagPage() {
     return () => {
       isMounted = false;
     };
-  }, [localOwnerName, pet?.ownerId, remoteOwnerNameResult?.ownerId]);
+  }, [localOwnerName, pet?.ownerId, remoteOwnerResult?.ownerId]);
 
   useEffect(() => {
     if (!pet) {
@@ -479,7 +489,7 @@ export default function PublicNfcTagPage() {
           href="/"
           className="mt-5 inline-flex rounded-full bg-white px-6 py-3 text-sm font-semibold uppercase tracking-[0.14em] text-zinc-950"
         >
-          Ir para PETTAPBR
+          Ir para PetTapBR
         </Link>
       </section>
     );
@@ -491,7 +501,7 @@ export default function PublicNfcTagPage() {
         <div className="mb-4 rounded-2xl border border-cyan-300/30 bg-cyan-500/10 px-4 py-3 text-xs uppercase tracking-[0.16em] text-cyan-100">
           Acesso detectado por NFC | Tag: {tag.code} | Local: {locationReady ? location : "Localizando..."}
         </div>
-        <PetPublicProfile pet={pet} ownerName={ownerName} />
+        <PetPublicProfile pet={pet} ownerName={ownerName} isPremiumPlan={isPremiumPlan} />
       </div>
     );
   }

@@ -6,6 +6,7 @@ import { useRouter, useParams } from "next/navigation";
 
 import { PetForm } from "@/components/pet-form";
 import { usePetTap } from "@/context/pettap-provider";
+import { isOwnerPro } from "@/lib/owner-defaults";
 import type { Pet, PetFormValues } from "@/lib/types";
 
 function mapPetToFormValues(pet: Pet): PetFormValues {
@@ -110,6 +111,7 @@ export default function EditPetPage() {
         title={`Editar ${pet.name}`}
         subtitle="Atualize dados do perfil, contatos e modo perdido com efeito imediato no link publico."
         submitLabel="Salvar alteracoes"
+        isPremiumPlan={isOwnerPro(currentOwner)}
         initialValues={initialValues}
         initialAvatarUrl={pet.avatarUrl}
         initialGallery={pet.gallery}

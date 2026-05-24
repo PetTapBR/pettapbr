@@ -24,6 +24,7 @@ Sistema web moderno para identificacao inteligente de pets via NFC.
 - Escolha de localizacao por mapa ou localizacao atual
 - Logo PETTAPBR integrada no app
 - Fluxo real de ativacao de tag em `/t/[tagCode]`
+- Assinatura Pro integrada ao Asaas (sandbox) com webhook
 
 ## Configuracao do Supabase
 
@@ -34,12 +35,30 @@ Sistema web moderno para identificacao inteligente de pets via NFC.
 ```bash
 NEXT_PUBLIC_SUPABASE_URL=...
 NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+SUPABASE_SERVICE_ROLE_KEY=...
 PETTAPBR_ADMIN_EMAIL=admin@pettapbr.com
 PETTAPBR_ADMIN_PASSWORD=troque-essa-senha
 PETTAPBR_ADMIN_SECRET=troque-esse-segredo
+ASAAS_API_KEY=...
+ASAAS_BASE_URL=https://api-sandbox.asaas.com/v3
+ASAAS_WEBHOOK_TOKEN=seu-token-forte-do-webhook
+ASAAS_PRO_MONTHLY_PRICE=7.90
 ```
 
 Sem essas variaveis, o sistema bloqueia cadastro/salvamento de pets e uploads.
+
+## Assinatura Pro (Asaas Sandbox)
+
+1. No painel da Asaas Sandbox, gere sua `ASAAS_API_KEY`.
+2. Crie um webhook para `https://SEU-DOMINIO/api/webhooks/asaas`.
+3. Configure no webhook um token forte (o mesmo valor em `ASAAS_WEBHOOK_TOKEN`).
+4. Selecione eventos:
+   - `PAYMENT_RECEIVED`
+   - `PAYMENT_CONFIRMED`
+   - `SUBSCRIPTION_INACTIVATED`
+   - `SUBSCRIPTION_DELETED`
+5. No app, acesse `/plans`, informe CPF/CNPJ, gere a cobranca e conclua o pagamento.
+6. Clique em `Ja paguei, verificar` para sincronizar imediatamente (alem do webhook automatico).
 
 ## Fluxo NFC
 

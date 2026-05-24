@@ -6,16 +6,16 @@ import Link from "next/link";
 import { usePetTap } from "@/context/pettap-provider";
 
 const valueHighlights = [
-  "Perfil digital premium para pets com foto, bio, contatos e galeria completa.",
+  "Perfil Start com nome, foto e contato para ativacao imediata.",
+  "Upgrade Pro com bio, galeria, dados medicos, modo perdido e alertas por proximidade.",
   "Identificacao por NFC para acesso imediato ao perfil em qualquer situacao.",
-  "Modo Perdido com alerta visual, contato rapido e localizacao compartilhavel.",
   "Painel do tutor com historico de acessos, tags e controle total dos pets.",
 ];
 
 const flowSteps = [
   {
     title: "1. Crie sua conta",
-    description: "Cadastre-se como tutor para acessar o painel e configurar seu ecossistema PETTAPBR.",
+    description: "Cadastre-se como tutor para acessar o painel e configurar seu ecossistema PetTapBR.",
   },
   {
     title: "2. Cadastre seu pet",
@@ -35,14 +35,24 @@ export default function HomePage() {
       <section className="relative overflow-hidden rounded-[2rem] border border-white/10 bg-white/5 p-6 shadow-2xl shadow-black/40 backdrop-blur-xl sm:p-10">
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_15%_25%,rgba(34,211,238,0.3),transparent_42%),radial-gradient(circle_at_90%_10%,rgba(255,255,255,0.12),transparent_38%)]" />
 
+        <div className="relative z-10 mb-6 overflow-hidden rounded-3xl">
+          <img src="/banner.png" alt="Banner PetTapBR" className="block h-auto w-full rounded-3xl" />
+        </div>
+
         <div className="relative z-10 grid gap-8 sm:grid-cols-2 sm:items-center">
           <div className="animate-fade-up grid gap-4">
             <p className="inline-flex w-fit rounded-full border border-cyan-300/40 bg-cyan-400/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-100">
               NFC Smart Pet Profile
             </p>
             <div className="flex items-center gap-3">
-              <Image src="/logo.jpg" alt="Logo PETTAPBR" width={52} height={52} />
-              <h1 className="text-4xl font-semibold tracking-tight text-white sm:text-5xl">PETTAPBR</h1>
+              <Image
+                src="/logo.png"
+                alt="Logo PetTapBR"
+                width={112}
+                height={38}
+                className="h-12 w-auto object-contain"
+              />
+              <h1 className="text-4xl font-semibold tracking-tight text-white sm:text-5xl">PetTapBR</h1>
             </div>
             <p className="max-w-xl text-sm leading-7 text-zinc-300 sm:text-base">
               Plataforma de identidade digital para pets com tecnologia NFC, visual premium e
@@ -64,6 +74,12 @@ export default function HomePage() {
                     className="rounded-full bg-white px-6 py-3 text-sm font-semibold uppercase tracking-[0.14em] text-zinc-950 transition hover:bg-cyan-200"
                   >
                     Entrar
+                  </Link>
+                  <Link
+                    href="/plans"
+                    className="rounded-full border border-white/20 px-6 py-3 text-sm font-semibold uppercase tracking-[0.14em] text-zinc-100 transition hover:bg-white/10"
+                  >
+                    Ver Planos
                   </Link>
                   <Link
                     href="/login?tab=register"
@@ -107,7 +123,7 @@ export default function HomePage() {
             <div>
               <p className="text-xs uppercase tracking-[0.16em] text-cyan-200">Pronto para comecar</p>
               <h3 className="mt-2 text-2xl font-semibold tracking-tight text-white sm:text-3xl">
-                Ative sua identidade digital PETTAPBR
+                Ative sua identidade digital PetTapBR
               </h3>
               <p className="mt-2 text-sm text-zinc-300">
                 Crie sua conta e configure seus pets com NFC em poucos minutos.

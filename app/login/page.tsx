@@ -33,7 +33,7 @@ export default function LoginPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const title = useMemo(
-    () => (tab === "login" ? "Entrar no PETTAPBR" : "Criar conta de tutor"),
+    () => (tab === "login" ? "Entrar no PetTapBR" : "Criar conta de tutor"),
     [tab],
   );
 
@@ -223,6 +223,10 @@ export default function LoginPage() {
             type="email"
             value={email}
             onChange={(event) => setEmail(event.target.value)}
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            inputMode="email"
             className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition focus:border-cyan-300/60 focus:bg-white/10"
           />
         </label>
@@ -233,6 +237,9 @@ export default function LoginPage() {
             type="password"
             value={password}
             onChange={(event) => setPassword(event.target.value)}
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
             className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition focus:border-cyan-300/60 focus:bg-white/10"
           />
         </label>

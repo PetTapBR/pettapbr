@@ -7,6 +7,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { PetPublicProfile } from "@/components/pet-public-profile";
 import { usePetTap } from "@/context/pettap-provider";
 import { formatViewerGpsLocation, reverseGeocodeLabel } from "@/lib/geocode-client";
+import { isOwnerPro } from "@/lib/owner-defaults";
 import { supabase } from "@/lib/supabase";
 import type { ScanSource } from "@/lib/types";
 
@@ -21,6 +22,8 @@ function parseSource(raw: string | null): ScanSource {
 interface OwnerRow {
   id: string;
   full_name: string;
+  plan_tier: "start" | "pro" | null;
+  plan_status: "active" | "inactive" | null;
 }
 
 export default function PublicPetPage() {
@@ -35,17 +38,24 @@ export default function PublicPetPage() {
 
   const [detectedLocation, setDetectedLocation] = useState("");
   const [detectedLocationReady, setDetectedLocationReady] = useState(false);
-  const [remoteOwnerNameResult, setRemoteOwnerNameResult] = useState<{ ownerId: string; name: string } | null>(
-    null,
-  );
+  const [remoteOwnerResult, setRemoteOwnerResult] = useState<{
+    ownerId: string;
+    name: string;
+    isPremiumPlan: boolean;
+  } | null>(null);
   const location = manualLocation ?? detectedLocation;
   const locationReady = manualLocation ? true : detectedLocationReady;
 
   const pet = useMemo(() => getPetBySlug(slug), [getPetBySlug, slug]);
-  const localOwnerName = pet?.ownerId ? (state.owners.find((owner) => owner.id === pet.ownerId)?.fullName ?? "") : "";
+  const localOwner = pet?.ownerId ? (state.owners.find((owner) => owner.id === pet.ownerId) ?? null) : null;
+  const localOwnerName = localOwner?.fullName ?? "";
+  const localOwnerIsPremium = isOwnerPro(localOwner);
   const remoteOwnerName =
-    pet?.ownerId && remoteOwnerNameResult?.ownerId === pet.ownerId ? remoteOwnerNameResult.name : "";
+    pet?.ownerId && remoteOwnerResult?.ownerId === pet.ownerId ? remoteOwnerResult.name : "";
+  const remoteOwnerIsPremium =
+    pet?.ownerId && remoteOwnerResult?.ownerId === pet.ownerId ? remoteOwnerResult.isPremiumPlan : false;
   const ownerName = localOwnerName || remoteOwnerName || "Tutor";
+  const isPremiumPlan = localOwner ? localOwnerIsPremium : remoteOwnerIsPremium;
   const recordedRef = useRef<string>("");
 
   useEffect(() => {
@@ -53,7 +63,7 @@ export default function PublicPetPage() {
       return;
     }
 
-    if (remoteOwnerNameResult?.ownerId === pet.ownerId) {
+    if (remoteOwnerResult?.ownerId === pet.ownerId) {
       return;
     }
 
@@ -64,7 +74,7 @@ export default function PublicPetPage() {
     async function fetchOwnerName() {
       const { data, error } = await supabaseClient
         .from("owners")
-        .select("id, full_name")
+        .select("id, full_name, plan_tier, plan_status")
         .eq("id", ownerId)
         .limit(1);
 
@@ -82,9 +92,10 @@ export default function PublicPetPage() {
         return;
       }
 
-      setRemoteOwnerNameResult({
+      setRemoteOwnerResult({
         ownerId: row.id,
         name: row.full_name || "Tutor",
+        isPremiumPlan: row.plan_tier === "pro" && row.plan_status !== "inactive",
       });
     }
 
@@ -93,7 +104,7 @@ export default function PublicPetPage() {
     return () => {
       isMounted = false;
     };
-  }, [localOwnerName, pet?.ownerId, remoteOwnerNameResult?.ownerId]);
+  }, [localOwnerName, pet?.ownerId, remoteOwnerResult?.ownerId]);
 
   useEffect(() => {
     if (manualLocation) {
@@ -188,7 +199,7 @@ export default function PublicPetPage() {
           href="/"
           className="mt-5 inline-flex rounded-full bg-white px-6 py-3 text-sm font-semibold uppercase tracking-[0.14em] text-zinc-950"
         >
-          Ir para PETTAPBR
+          Ir para PetTapBR
         </Link>
       </section>
     );
@@ -199,7 +210,7 @@ export default function PublicPetPage() {
       <div className="mb-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-xs uppercase tracking-[0.16em] text-zinc-300">
         Acesso detectado por {source.toUpperCase()} | Local: {locationReady ? location : "Localizando..."}
       </div>
-      <PetPublicProfile pet={pet} ownerName={ownerName} />
+      <PetPublicProfile pet={pet} ownerName={ownerName} isPremiumPlan={isPremiumPlan} />
     </div>
   );
 }

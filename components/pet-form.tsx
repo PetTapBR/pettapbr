@@ -42,6 +42,7 @@ interface PetFormProps {
   title: string;
   subtitle: string;
   submitLabel: string;
+  isPremiumPlan?: boolean;
   initialValues?: PetFormValues;
   initialAvatarUrl?: string;
   initialGallery?: PetMedia[];
@@ -103,6 +104,7 @@ export function PetForm({
   title,
   subtitle,
   submitLabel,
+  isPremiumPlan = true,
   initialValues,
   initialAvatarUrl = "",
   initialGallery = [],
@@ -121,6 +123,7 @@ export function PetForm({
   const [locationFeedback, setLocationFeedback] = useState("");
   const geocodeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const isPremium = isPremiumPlan;
   const isLostMode = useMemo(() => values.status === "lost", [values.status]);
 
   const avatarPreview = useMemo(() => {
@@ -270,8 +273,15 @@ export function PetForm({
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!values.name.trim() || !values.city.trim() || !values.whatsapp.trim()) {
-      setFeedback("Preencha nome, cidade e WhatsApp.");
+    const mainContact = (values.whatsapp || values.phone).trim();
+
+    if (!values.name.trim() || !mainContact) {
+      setFeedback("Preencha nome do pet e um contato principal.");
+      return;
+    }
+
+    if (isPremium && !values.city.trim()) {
+      setFeedback("Preencha a cidade do pet.");
       return;
     }
 
@@ -280,7 +290,7 @@ export function PetForm({
       return;
     }
 
-    if (values.locationLat === null || values.locationLng === null) {
+    if (isPremium && (values.locationLat === null || values.locationLng === null)) {
       setFeedback("Selecione a localizacao no mapa ou use sua localizacao atual.");
       return;
     }
@@ -327,30 +337,42 @@ export function PetForm({
             onChange={(value) => updateField("name", value)}
             placeholder="Ex: Luna"
           />
-          <InputField
-            label="Idade"
-            value={values.age}
-            onChange={(value) => updateField("age", value)}
-            placeholder="Ex: 3 anos"
-          />
-          <InputField
-            label="Raca"
-            value={values.breed}
-            onChange={(value) => updateField("breed", value)}
-            placeholder="Ex: Golden Retriever"
-          />
-          <InputField
-            label="Peso"
-            value={values.weight}
-            onChange={(value) => updateField("weight", value)}
-            placeholder="Ex: 28 kg"
-          />
-          <InputField
-            label="Cidade"
-            value={values.city}
-            onChange={(value) => updateField("city", value)}
-            placeholder="Ex: Sao Paulo - SP"
-          />
+
+          {isPremium ? (
+            <InputField
+              label="Idade"
+              value={values.age}
+              onChange={(value) => updateField("age", value)}
+              placeholder="Ex: 3 anos"
+            />
+          ) : null}
+
+          {isPremium ? (
+            <InputField
+              label="Raca"
+              value={values.breed}
+              onChange={(value) => updateField("breed", value)}
+              placeholder="Ex: Golden Retriever"
+            />
+          ) : null}
+
+          {isPremium ? (
+            <InputField
+              label="Peso"
+              value={values.weight}
+              onChange={(value) => updateField("weight", value)}
+              placeholder="Ex: 28 kg"
+            />
+          ) : null}
+
+          {isPremium ? (
+            <InputField
+              label="Cidade"
+              value={values.city}
+              onChange={(value) => updateField("city", value)}
+              placeholder="Ex: Sao Paulo - SP"
+            />
+          ) : null}
 
           <label className="grid gap-2 text-sm text-zinc-300">
             <span className="text-xs uppercase tracking-[0.14em] text-zinc-400">Foto principal</span>
@@ -374,188 +396,207 @@ export function PetForm({
           </div>
         ) : null}
 
-        <TextareaField
-          label="Bio"
-          value={values.bio}
-          onChange={(value) => updateField("bio", value)}
-          placeholder="Descreva personalidade, rotina e pontos importantes"
-        />
+        {isPremium ? (
+          <TextareaField
+            label="Bio"
+            value={values.bio}
+            onChange={(value) => updateField("bio", value)}
+            placeholder="Descreva personalidade, rotina e pontos importantes"
+          />
+        ) : (
+          <div className="rounded-2xl border border-cyan-300/25 bg-cyan-500/10 p-4 text-sm text-cyan-100">
+            Plano Start ativo: este perfil permite nome, foto e contato principal. Para liberar bio,
+            localizacao, galerias, dados medicos e modo perdido, faca upgrade para o plano Pro.
+          </div>
+        )}
 
         <div className="grid gap-5 sm:grid-cols-2">
           <InputField
-            label="WhatsApp"
+            label={isPremium ? "WhatsApp" : "Contato principal"}
             value={values.whatsapp}
             onChange={(value) => updateField("whatsapp", value)}
             placeholder="+55 11 99999-9999"
           />
-          <InputField
-            label="Telefone para ligacao"
-            value={values.phone}
-            onChange={(value) => updateField("phone", value)}
-            placeholder="+55 11 3333-3333"
-          />
-
-          <label className="grid gap-2 text-sm text-zinc-300">
-            <span className="text-xs uppercase tracking-[0.14em] text-zinc-400">Status</span>
-            <select
-              value={values.status}
-              onChange={(event) => updateField("status", event.target.value as PetFormValues["status"])}
-              className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-300/60 focus:bg-white/10"
-            >
-              <option value="safe" className="bg-zinc-900 text-white">
-                Seguro
-              </option>
-              <option value="lost" className="bg-zinc-900 text-white">
-                Perdido
-              </option>
-              <option value="found" className="bg-zinc-900 text-white">
-                Encontrado
-              </option>
-            </select>
-          </label>
-
-          <InputField
-            label="Referencia do local"
-            value={values.locationLabel}
-            onChange={(value) => updateField("locationLabel", value)}
-            placeholder="Ex: Parque Ibirapuera, Portao 7"
-          />
-        </div>
-
-        <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-            <p className="text-xs uppercase tracking-[0.14em] text-zinc-300">Selecione a localizacao no mapa</p>
-            <button
-              type="button"
-              onClick={handleUseMyLocation}
-              className="rounded-full border border-cyan-300/40 bg-cyan-500/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-cyan-100 transition hover:bg-cyan-500/20"
-            >
-              Usar minha localizacao atual
-            </button>
-          </div>
-
-          <LocationPickerMap
-            lat={values.locationLat}
-            lng={values.locationLng}
-            onPick={(lat, lng) => {
-              updateField("locationLat", lat);
-              updateField("locationLng", lng);
-              setLocationFeedback("Ponto selecionado no mapa. Buscando endereco real...");
-              scheduleResolveLocationLabel(lat, lng);
-            }}
-          />
-
-          <p className="mt-3 text-xs text-zinc-400">
-            Coordenadas selecionadas: {formatCoordinates(values.locationLat, values.locationLng) || "Nenhuma"}
-          </p>
-          {isRequestingLocation ? (
-            <p className="mt-1 text-xs text-cyan-200">Solicitando permissao de localizacao...</p>
+          {isPremium ? (
+            <InputField
+              label="Telefone para ligacao"
+              value={values.phone}
+              onChange={(value) => updateField("phone", value)}
+              placeholder="+55 11 3333-3333"
+            />
           ) : null}
-          {isResolvingAddress ? <p className="mt-1 text-xs text-cyan-200">Resolvendo endereco...</p> : null}
-          {locationFeedback ? <p className="mt-1 text-xs text-zinc-300">{locationFeedback}</p> : null}
+
+          {isPremium ? (
+            <label className="grid gap-2 text-sm text-zinc-300">
+              <span className="text-xs uppercase tracking-[0.14em] text-zinc-400">Status</span>
+              <select
+                value={values.status}
+                onChange={(event) => updateField("status", event.target.value as PetFormValues["status"])}
+                className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-300/60 focus:bg-white/10"
+              >
+                <option value="safe" className="bg-zinc-900 text-white">
+                  Seguro
+                </option>
+                <option value="lost" className="bg-zinc-900 text-white">
+                  Perdido
+                </option>
+                <option value="found" className="bg-zinc-900 text-white">
+                  Encontrado
+                </option>
+              </select>
+            </label>
+          ) : null}
+
+          {isPremium ? (
+            <InputField
+              label="Referencia do local"
+              value={values.locationLabel}
+              onChange={(value) => updateField("locationLabel", value)}
+              placeholder="Ex: Parque Ibirapuera, Portao 7"
+            />
+          ) : null}
         </div>
 
-        {isLostMode && (
-          <div className="rounded-2xl border border-rose-400/40 bg-rose-500/10 p-4 text-rose-100">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em]">Modo Perdido Ativo</p>
-            <p className="mt-2 text-sm text-rose-200">
-              Defina uma recompensa opcional para destacar no perfil publico.
+        {isPremium ? (
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <p className="text-xs uppercase tracking-[0.14em] text-zinc-300">
+                Selecione a localizacao no mapa
+              </p>
+              <button
+                type="button"
+                onClick={handleUseMyLocation}
+                className="rounded-full border border-cyan-300/40 bg-cyan-500/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-cyan-100 transition hover:bg-cyan-500/20"
+              >
+                Usar minha localizacao atual
+              </button>
+            </div>
+
+            <LocationPickerMap
+              lat={values.locationLat}
+              lng={values.locationLng}
+              onPick={(lat, lng) => {
+                updateField("locationLat", lat);
+                updateField("locationLng", lng);
+                setLocationFeedback("Ponto selecionado no mapa. Buscando endereco real...");
+                scheduleResolveLocationLabel(lat, lng);
+              }}
+            />
+
+            <p className="mt-3 text-xs text-zinc-400">
+              Coordenadas selecionadas: {formatCoordinates(values.locationLat, values.locationLng) || "Nenhuma"}
             </p>
-            <div className="mt-3">
-              <InputField
-                label="Recompensa"
-                value={values.reward}
-                onChange={(value) => updateField("reward", value)}
-                placeholder="Ex: R$ 500"
+            {isRequestingLocation ? (
+              <p className="mt-1 text-xs text-cyan-200">Solicitando permissao de localizacao...</p>
+            ) : null}
+            {isResolvingAddress ? <p className="mt-1 text-xs text-cyan-200">Resolvendo endereco...</p> : null}
+            {locationFeedback ? <p className="mt-1 text-xs text-zinc-300">{locationFeedback}</p> : null}
+          </div>
+        ) : null}
+
+        {isPremium ? (
+          <>
+            {isLostMode ? (
+              <div className="rounded-2xl border border-rose-400/40 bg-rose-500/10 p-4 text-rose-100">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em]">Modo Perdido Ativo</p>
+                <p className="mt-2 text-sm text-rose-200">
+                  Defina uma recompensa opcional para destacar no perfil publico.
+                </p>
+                <div className="mt-3">
+                  <InputField
+                    label="Recompensa"
+                    value={values.reward}
+                    onChange={(value) => updateField("reward", value)}
+                    placeholder="Ex: R$ 500"
+                  />
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <InputField
+                  label="Recompensa"
+                  value={values.reward}
+                  onChange={(value) => updateField("reward", value)}
+                  placeholder="Opcional"
+                />
+              </div>
+            )}
+
+            <div className="grid gap-5 sm:grid-cols-3">
+              <TextareaField
+                label="Alergias"
+                value={values.allergies}
+                onChange={(value) => updateField("allergies", value)}
+                placeholder="Alergia a frango"
+              />
+              <TextareaField
+                label="Medicamentos"
+                value={values.medications}
+                onChange={(value) => updateField("medications", value)}
+                placeholder="Suplemento articular"
+              />
+              <TextareaField
+                label="Vacinas"
+                value={values.vaccines}
+                onChange={(value) => updateField("vaccines", value)}
+                placeholder="V10, antirrabica"
               />
             </div>
-          </div>
-        )}
 
-        {!isLostMode && (
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-            <InputField
-              label="Recompensa"
-              value={values.reward}
-              onChange={(value) => updateField("reward", value)}
-              placeholder="Opcional"
-            />
-          </div>
-        )}
+            <div className="grid gap-5 sm:grid-cols-2">
+              <label className="grid gap-2 text-sm text-zinc-300">
+                <span className="text-xs uppercase tracking-[0.14em] text-zinc-400">Fotos da galeria</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  onChange={(event) => setPhotoFiles(Array.from(event.target.files ?? []))}
+                  className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-zinc-300 file:mr-4 file:rounded-full file:border-0 file:bg-zinc-200 file:px-4 file:py-2 file:text-xs file:font-semibold file:uppercase file:tracking-[0.12em] file:text-zinc-950"
+                />
+                {photoFiles.length > 0 ? (
+                  <p className="text-xs text-zinc-400">{photoFiles.length} foto(s) selecionada(s)</p>
+                ) : null}
+              </label>
 
-        <div className="grid gap-5 sm:grid-cols-3">
-          <TextareaField
-            label="Alergias"
-            value={values.allergies}
-            onChange={(value) => updateField("allergies", value)}
-            placeholder="Alergia a frango"
-          />
-          <TextareaField
-            label="Medicamentos"
-            value={values.medications}
-            onChange={(value) => updateField("medications", value)}
-            placeholder="Suplemento articular"
-          />
-          <TextareaField
-            label="Vacinas"
-            value={values.vaccines}
-            onChange={(value) => updateField("vaccines", value)}
-            placeholder="V10, antirrabica"
-          />
-        </div>
+              <label className="grid gap-2 text-sm text-zinc-300">
+                <span className="text-xs uppercase tracking-[0.14em] text-zinc-400">Videos da galeria</span>
+                <input
+                  type="file"
+                  accept="video/*"
+                  multiple
+                  onChange={(event) => setVideoFiles(Array.from(event.target.files ?? []))}
+                  className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-zinc-300 file:mr-4 file:rounded-full file:border-0 file:bg-zinc-200 file:px-4 file:py-2 file:text-xs file:font-semibold file:uppercase file:tracking-[0.12em] file:text-zinc-950"
+                />
+                {videoFiles.length > 0 ? (
+                  <p className="text-xs text-zinc-400">{videoFiles.length} video(s) selecionado(s)</p>
+                ) : null}
+              </label>
+            </div>
 
-        <div className="grid gap-5 sm:grid-cols-2">
-          <label className="grid gap-2 text-sm text-zinc-300">
-            <span className="text-xs uppercase tracking-[0.14em] text-zinc-400">Fotos da galeria</span>
-            <input
-              type="file"
-              accept="image/*"
-              multiple
-              onChange={(event) => setPhotoFiles(Array.from(event.target.files ?? []))}
-              className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-zinc-300 file:mr-4 file:rounded-full file:border-0 file:bg-zinc-200 file:px-4 file:py-2 file:text-xs file:font-semibold file:uppercase file:tracking-[0.12em] file:text-zinc-950"
-            />
-            {photoFiles.length > 0 ? (
-              <p className="text-xs text-zinc-400">{photoFiles.length} foto(s) selecionada(s)</p>
+            {existingGallery.length > 0 ? (
+              <div className="grid gap-3 sm:grid-cols-2">
+                {existingGallery.map((media) => (
+                  <article key={media.id} className="overflow-hidden rounded-2xl border border-white/10 bg-black/30">
+                    {media.type === "photo" ? (
+                      <img src={media.url} alt={media.caption || "Foto"} className="h-44 w-full object-cover" />
+                    ) : (
+                      <video src={media.url} className="h-44 w-full object-cover" controls />
+                    )}
+                    <div className="flex items-center justify-between px-3 py-2">
+                      <p className="text-xs uppercase tracking-[0.12em] text-zinc-300">{media.type}</p>
+                      <button
+                        type="button"
+                        onClick={() => removeExistingMedia(media.id)}
+                        className="rounded-full border border-rose-300/40 px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-rose-200"
+                      >
+                        Remover
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
             ) : null}
-          </label>
-
-          <label className="grid gap-2 text-sm text-zinc-300">
-            <span className="text-xs uppercase tracking-[0.14em] text-zinc-400">Videos da galeria</span>
-            <input
-              type="file"
-              accept="video/*"
-              multiple
-              onChange={(event) => setVideoFiles(Array.from(event.target.files ?? []))}
-              className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-zinc-300 file:mr-4 file:rounded-full file:border-0 file:bg-zinc-200 file:px-4 file:py-2 file:text-xs file:font-semibold file:uppercase file:tracking-[0.12em] file:text-zinc-950"
-            />
-            {videoFiles.length > 0 ? (
-              <p className="text-xs text-zinc-400">{videoFiles.length} video(s) selecionado(s)</p>
-            ) : null}
-          </label>
-        </div>
-
-        {existingGallery.length > 0 ? (
-          <div className="grid gap-3 sm:grid-cols-2">
-            {existingGallery.map((media) => (
-              <article key={media.id} className="overflow-hidden rounded-2xl border border-white/10 bg-black/30">
-                {media.type === "photo" ? (
-                  <img src={media.url} alt={media.caption || "Foto"} className="h-44 w-full object-cover" />
-                ) : (
-                  <video src={media.url} className="h-44 w-full object-cover" controls />
-                )}
-                <div className="flex items-center justify-between px-3 py-2">
-                  <p className="text-xs uppercase tracking-[0.12em] text-zinc-300">{media.type}</p>
-                  <button
-                    type="button"
-                    onClick={() => removeExistingMedia(media.id)}
-                    className="rounded-full border border-rose-300/40 px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-rose-200"
-                  >
-                    Remover
-                  </button>
-                </div>
-              </article>
-            ))}
-          </div>
+          </>
         ) : null}
 
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

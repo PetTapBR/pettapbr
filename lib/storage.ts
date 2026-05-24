@@ -1,4 +1,5 @@
 import { STORAGE_KEY } from "./constants";
+import { createDefaultOwnerAlerts, createDefaultOwnerSubscription } from "./owner-defaults";
 import { initialState } from "./seed";
 import type { AppState, NfcTag } from "./types";
 import { buildGoogleMapsUrl, parseLatLngFromLocationUrl } from "./utils";
@@ -33,6 +34,14 @@ function normalizeNfcTags(tags: unknown): NfcTag[] {
       } as NfcTag;
     })
     .filter((tag) => Boolean(tag.code));
+}
+
+function normalizeOwners(owners: AppState["owners"]): AppState["owners"] {
+  return owners.map((owner) => ({
+    ...owner,
+    subscription: createDefaultOwnerSubscription(owner.subscription),
+    alerts: createDefaultOwnerAlerts(owner.alerts),
+  }));
 }
 
 function removeLegacyDemoData(state: AppState): AppState {
@@ -92,6 +101,7 @@ function normalizeState(parsed: AppState): AppState {
 
   return {
     ...sanitized,
+    owners: normalizeOwners(sanitized.owners),
     nfcTags: normalizeNfcTags((sanitized as Partial<AppState>).nfcTags),
     scanEvents: sanitized.scanEvents.map((event) => ({
       ...event,

@@ -6,7 +6,7 @@ export function StatusPill({ status }: { status: PetStatus }) {
 
   return (
     <span
-      className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] ${meta.badgeClass}`}
+      className={`inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] sm:px-3 sm:text-xs sm:tracking-[0.14em] ${meta.badgeClass}`}
     >
       {meta.label}
     </span>

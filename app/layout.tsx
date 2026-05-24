@@ -19,9 +19,14 @@ const sora = Sora({
 });
 
 export const metadata: Metadata = {
-  title: "PETTAPBR | Identidade Digital Inteligente para Pets",
+  title: "PetTapBR | Identidade Digital Inteligente para Pets",
   description:
     "Perfil inteligente para pets via NFC com modo perdido, contatos rapidos e painel do tutor.",
+  icons: {
+    icon: [{ url: "/favicon.ico", sizes: "any" }],
+    shortcut: [{ url: "/favicon.ico" }],
+    apple: [{ url: "/icon.png", sizes: "180x180" }],
+  },
 };
 
 export default function RootLayout({

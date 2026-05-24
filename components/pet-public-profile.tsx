@@ -18,7 +18,15 @@ function InfoCard({ title, value }: { title: string; value: string }) {
   );
 }
 
-export function PetPublicProfile({ pet, ownerName }: { pet: Pet; ownerName?: string }) {
+export function PetPublicProfile({
+  pet,
+  ownerName,
+  isPremiumPlan = true,
+}: {
+  pet: Pet;
+  ownerName?: string;
+  isPremiumPlan?: boolean;
+}) {
   const [shareFeedback, setShareFeedback] = useState("");
 
   const statusMeta = useMemo(() => getStatusMeta(pet.status), [pet.status]);
@@ -30,6 +38,7 @@ export function PetPublicProfile({ pet, ownerName }: { pet: Pet; ownerName?: str
   const whatsappDigits = phoneToDigits(pet.whatsapp);
   const whatsappUrl = `https://wa.me/${whatsappDigits}?text=Oi%2C+acabei+de+acessar+o+perfil+do+${encodeURIComponent(pet.name)}.`;
   const callUrl = `tel:${phoneToDigits(pet.phone || pet.whatsapp)}`;
+  const showPremiumSections = isPremiumPlan;
 
   async function shareLocation() {
     if (!whatsappDigits) {
@@ -73,7 +82,7 @@ export function PetPublicProfile({ pet, ownerName }: { pet: Pet; ownerName?: str
     setShareFeedback("Abrindo WhatsApp com a localizacao.");
   }
 
-  const lostMode = pet.status === "lost";
+  const lostMode = showPremiumSections && pet.status === "lost";
 
   return (
     <section
@@ -119,11 +128,32 @@ export function PetPublicProfile({ pet, ownerName }: { pet: Pet; ownerName?: str
               {statusMeta.label}
             </p>
             <h1 className="mt-3 text-4xl font-semibold tracking-tight text-white">{pet.name}</h1>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-300">{pet.bio}</p>
+            {showPremiumSections ? (
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-300">{pet.bio}</p>
+            ) : (
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-300">
+                Perfil basico PetTapBR.
+              </p>
+            )}
           </div>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div
+          className={[
+            "rounded-2xl border px-4 py-3",
+            lostMode
+              ? "border-rose-300/55 bg-rose-500/20 text-rose-50"
+              : "border-cyan-300/35 bg-cyan-500/10 text-cyan-100",
+          ].join(" ")}
+        >
+          <p className="text-xs font-semibold uppercase tracking-[0.14em]">Urgente</p>
+          <p className="mt-1 text-sm">
+            Se encontrou este pet, toque em WhatsApp imediatamente.
+          </p>
+          <p className="mt-2 text-[11px] uppercase tracking-[0.14em] opacity-80">Protegido por PetTapBR</p>
+        </div>
+
+        <div className={showPremiumSections ? "grid gap-3 sm:grid-cols-3" : "grid gap-3 sm:grid-cols-2"}>
           <a
             href={whatsappUrl}
             target="_blank"
@@ -138,68 +168,76 @@ export function PetPublicProfile({ pet, ownerName }: { pet: Pet; ownerName?: str
           >
             Ligar Agora
           </a>
-          <button
-            type="button"
-            onClick={shareLocation}
-            className="rounded-2xl border border-violet-300/40 bg-violet-500/15 px-4 py-3 text-center text-sm font-semibold uppercase tracking-[0.14em] text-violet-100 transition hover:bg-violet-500/25"
-          >
-            Compartilhar Localizacao
-          </button>
+          {showPremiumSections ? (
+            <button
+              type="button"
+              onClick={shareLocation}
+              className="rounded-2xl border border-violet-300/40 bg-violet-500/15 px-4 py-3 text-center text-sm font-semibold uppercase tracking-[0.14em] text-violet-100 transition hover:bg-violet-500/25"
+            >
+              ENVIAR MINHA LOCALIZACAO
+            </button>
+          ) : null}
         </div>
 
-        <p className="text-xs text-zinc-400">{shareFeedback}</p>
+        {showPremiumSections ? <p className="text-xs text-zinc-400">{shareFeedback}</p> : null}
 
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          <InfoCard title="Idade" value={pet.age} />
-          <InfoCard title="Raca" value={pet.breed} />
-          <InfoCard title="Peso" value={pet.weight} />
-          <InfoCard title="Cidade" value={pet.city} />
-          <InfoCard title="Localizacao" value={pet.locationLabel} />
-        </div>
+        {showPremiumSections ? (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            <InfoCard title="Idade" value={pet.age} />
+            <InfoCard title="Raca" value={pet.breed} />
+            <InfoCard title="Peso" value={pet.weight} />
+            <InfoCard title="Cidade" value={pet.city} />
+            <InfoCard title="Localizacao" value={pet.locationLabel} />
+          </div>
+        ) : null}
 
-        <section className="grid gap-3 sm:grid-cols-3">
-          <InfoCard title="Alergias" value={pet.medical.allergies} />
-          <InfoCard title="Medicamentos" value={pet.medical.medications} />
-          <InfoCard title="Vacinas" value={pet.medical.vaccines} />
-        </section>
+        {showPremiumSections ? (
+          <section className="grid gap-3 sm:grid-cols-3">
+            <InfoCard title="Alergias" value={pet.medical.allergies} />
+            <InfoCard title="Medicamentos" value={pet.medical.medications} />
+            <InfoCard title="Vacinas" value={pet.medical.vaccines} />
+          </section>
+        ) : null}
 
-        <section className="grid gap-3 sm:grid-cols-2">
-          {pet.gallery.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-white/15 bg-white/5 p-5 text-sm text-zinc-400 sm:col-span-2">
-              Sem fotos e videos cadastrados.
-            </div>
-          ) : (
-            pet.gallery.map((media) => {
-              if (media.type === "photo") {
+        {showPremiumSections ? (
+          <section className="grid gap-3 sm:grid-cols-2">
+            {pet.gallery.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-white/15 bg-white/5 p-5 text-sm text-zinc-400 sm:col-span-2">
+                Sem fotos e videos cadastrados.
+              </div>
+            ) : (
+              pet.gallery.map((media) => {
+                if (media.type === "photo") {
+                  return (
+                    <figure key={media.id} className="overflow-hidden rounded-2xl border border-white/10 bg-black/30">
+                      <img src={media.url} alt={media.caption || pet.name} className="h-56 w-full object-cover" />
+                      <figcaption className="px-3 py-2 text-xs text-zinc-300">{media.caption}</figcaption>
+                    </figure>
+                  );
+                }
+
+                const youtubeEmbed = getYouTubeEmbed(media.url);
+
                 return (
-                  <figure key={media.id} className="overflow-hidden rounded-2xl border border-white/10 bg-black/30">
-                    <img src={media.url} alt={media.caption || pet.name} className="h-56 w-full object-cover" />
-                    <figcaption className="px-3 py-2 text-xs text-zinc-300">{media.caption}</figcaption>
-                  </figure>
+                  <div key={media.id} className="overflow-hidden rounded-2xl border border-white/10 bg-black/40">
+                    {youtubeEmbed ? (
+                      <iframe
+                        src={youtubeEmbed}
+                        title={`${pet.name}-video-${media.id}`}
+                        className="h-56 w-full"
+                        allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture"
+                        allowFullScreen
+                      />
+                    ) : (
+                      <video src={media.url} className="h-56 w-full object-cover" controls />
+                    )}
+                    <p className="px-3 py-2 text-xs text-zinc-300">{media.caption}</p>
+                  </div>
                 );
-              }
-
-              const youtubeEmbed = getYouTubeEmbed(media.url);
-
-              return (
-                <div key={media.id} className="overflow-hidden rounded-2xl border border-white/10 bg-black/40">
-                  {youtubeEmbed ? (
-                    <iframe
-                      src={youtubeEmbed}
-                      title={`${pet.name}-video-${media.id}`}
-                      className="h-56 w-full"
-                      allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture"
-                      allowFullScreen
-                    />
-                  ) : (
-                    <video src={media.url} className="h-56 w-full object-cover" controls />
-                  )}
-                  <p className="px-3 py-2 text-xs text-zinc-300">{media.caption}</p>
-                </div>
-              );
-            })
-          )}
-        </section>
+              })
+            )}
+          </section>
+        ) : null}
       </div>
     </section>
   );

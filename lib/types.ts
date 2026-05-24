@@ -6,11 +6,37 @@ export type MediaType = "photo" | "video";
 
 export type NfcTagStatus = "unlinked" | "active" | "disabled";
 
+export type PlanTier = "start" | "pro";
+
+export type PlanStatus = "active" | "inactive";
+
+export type PlanProvider = "manual" | "asaas";
+
+export interface OwnerSubscription {
+  tier: PlanTier;
+  status: PlanStatus;
+  provider: PlanProvider;
+  asaasCustomerId: string;
+  asaasSubscriptionId: string;
+  expiresAt: string | null;
+  updatedAt: string;
+}
+
+export interface OwnerAlertSettings {
+  receiveLostAlerts: boolean;
+  radiusKm: number;
+  locationLat: number | null;
+  locationLng: number | null;
+  locationLabel: string;
+}
+
 export interface Owner {
   id: string;
   fullName: string;
   email: string;
   password: string;
+  subscription: OwnerSubscription;
+  alerts: OwnerAlertSettings;
   createdAt: string;
 }
 
