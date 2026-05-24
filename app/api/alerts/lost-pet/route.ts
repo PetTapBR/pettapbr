@@ -22,6 +22,7 @@ interface OwnerAlertRow {
 interface PetAlertRow {
   id: string;
   owner_id: string;
+  slug: string | null;
   name: string;
   city: string;
   location_lat: number | null;
@@ -84,7 +85,7 @@ export async function POST(request: Request) {
 
   const { data: petRows, error: petError } = await supabase
     .from("pets")
-    .select("id, owner_id, name, city, location_lat, location_lng, location_label")
+    .select("id, owner_id, slug, name, city, location_lat, location_lng, location_label")
     .eq("id", petId)
     .limit(1);
 
@@ -232,6 +233,7 @@ export async function POST(request: Request) {
   }
 
   const pushEnabled = isWebPushConfigured();
+  const targetPublicUrl = pet.slug ? `/p/${encodeURIComponent(pet.slug)}` : `/dashboard?pet=${encodeURIComponent(pet.id)}`;
   let pushSent = 0;
   let pushFailed = 0;
   let pushSkippedNoSubscription = 0;
@@ -278,7 +280,7 @@ export async function POST(request: Request) {
             {
               title: "Pet perdido proximo",
               body: notification.message,
-              url: "/dashboard",
+              url: targetPublicUrl,
               tag: `lost-pet-${pet.id}`,
             },
           );
