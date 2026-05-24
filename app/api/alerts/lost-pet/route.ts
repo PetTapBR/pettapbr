@@ -233,7 +233,8 @@ export async function POST(request: Request) {
   }
 
   const pushEnabled = isWebPushConfigured();
-  const targetPublicUrl = pet.slug ? `/p/${encodeURIComponent(pet.slug)}` : `/dashboard?pet=${encodeURIComponent(pet.id)}`;
+  const petSlugOrId = (pet.slug ?? "").trim() || pet.id;
+  const targetPublicUrl = `/p/${encodeURIComponent(petSlugOrId)}`;
   let pushSent = 0;
   let pushFailed = 0;
   let pushSkippedNoSubscription = 0;
