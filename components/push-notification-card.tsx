@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { usePetTap } from "@/context/pettap-provider";
+import { authFetch } from "@/lib/auth-client";
 
 type BrowserPermission = NotificationPermission | "unsupported";
 
@@ -43,14 +44,13 @@ function canUsePushInCurrentOrigin() {
   return host === "localhost" || host === "127.0.0.1" || host.endsWith(".localhost");
 }
 
-async function saveSubscription(ownerId: string, subscription: PushSubscription) {
-  const response = await fetch("/api/push/subscribe", {
+async function saveSubscription(subscription: PushSubscription) {
+  const response = await authFetch("/api/push/subscribe", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      ownerId,
       userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "",
       subscription: subscription.toJSON(),
     }),
@@ -165,7 +165,7 @@ export function PushNotificationCard() {
         });
       }
 
-      await saveSubscription(currentOwner.id, subscription);
+      await saveSubscription(subscription);
       setIsPushEnabled(true);
       setFeedback("Notificacoes push ativadas neste dispositivo.");
     } catch (error) {

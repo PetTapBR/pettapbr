@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
 
+import { consumeRateLimit } from "@/lib/rate-limit";
+import { getRequestIp } from "@/lib/request-security";
+
 const NOMINATIM_ENDPOINT = "https://nominatim.openstreetmap.org/reverse";
 const REQUEST_TIMEOUT_MS = 9000;
 
@@ -20,6 +23,27 @@ function parseCoordinate(
 }
 
 export async function GET(request: Request) {
+  const rateLimit = consumeRateLimit({
+    key: `geocode-reverse:${getRequestIp(request)}`,
+    maxRequests: 180,
+    windowMs: 60 * 60 * 1000,
+  });
+
+  if (!rateLimit.ok) {
+    return NextResponse.json(
+      {
+        ok: false,
+        message: "Muitas consultas de localizacao em pouco tempo.",
+      },
+      {
+        status: 429,
+        headers: {
+          "Retry-After": String(rateLimit.retryAfterSeconds),
+        },
+      },
+    );
+  }
+
   const url = new URL(request.url);
   const lat = parseCoordinate(url.searchParams.get("lat"), { min: -90, max: 90 });
   const lng = parseCoordinate(url.searchParams.get("lng"), { min: -180, max: 180 });

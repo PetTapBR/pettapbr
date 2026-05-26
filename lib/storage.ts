@@ -1,6 +1,7 @@
 import { STORAGE_KEY } from "./constants";
 import { createDefaultOwnerAlerts, createDefaultOwnerSubscription } from "./owner-defaults";
 import { initialState } from "./seed";
+import { hasSupabase } from "./supabase";
 import type { AppState, NfcTag } from "./types";
 import { buildGoogleMapsUrl, parseLatLngFromLocationUrl } from "./utils";
 
@@ -128,6 +129,10 @@ export function loadState(): AppState {
     return initialState;
   }
 
+  if (hasSupabase) {
+    return initialState;
+  }
+
   const raw = window.localStorage.getItem(STORAGE_KEY);
 
   if (!raw) {
@@ -149,6 +154,11 @@ export function loadState(): AppState {
 
 export function persistState(state: AppState) {
   if (typeof window === "undefined") {
+    return;
+  }
+
+  if (hasSupabase) {
+    window.localStorage.removeItem(STORAGE_KEY);
     return;
   }
 

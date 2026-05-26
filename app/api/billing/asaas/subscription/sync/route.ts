@@ -11,11 +11,10 @@ import {
   isAsaasPaymentSettled,
   resolveRenewalMonths,
 } from "@/lib/plan-billing";
+import { consumeRateLimit } from "@/lib/rate-limit";
+import { requireAuthenticatedUser } from "@/lib/request-auth";
+import { getRequestIp } from "@/lib/request-security";
 import { createSupabaseServerClient, hasSupabaseServerClient } from "@/lib/supabase-server";
-
-interface SyncSubscriptionBody {
-  ownerId?: string;
-}
 
 interface OwnerPlanRow {
   id: string;
@@ -107,39 +106,41 @@ async function applyPaidPlan(
 }
 
 export async function POST(request: Request) {
+  const auth = await requireAuthenticatedUser(request);
+  if (!auth.ok) {
+    return auth.response;
+  }
+
   if (!hasSupabaseServerClient()) {
     return NextResponse.json(
       {
         ok: false,
         message:
-          "Configure NEXT_PUBLIC_SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY (ou NEXT_PUBLIC_SUPABASE_ANON_KEY) para continuar.",
+          "Configure NEXT_PUBLIC_SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY para continuar.",
       },
       { status: 500 },
     );
   }
 
-  let body: SyncSubscriptionBody;
+  const ownerId = auth.user.id;
+  const rateLimit = consumeRateLimit({
+    key: `billing-sync:${ownerId}:${getRequestIp(request)}`,
+    maxRequests: 80,
+    windowMs: 60 * 60 * 1000,
+  });
 
-  try {
-    body = (await request.json()) as SyncSubscriptionBody;
-  } catch {
+  if (!rateLimit.ok) {
     return NextResponse.json(
       {
         ok: false,
-        message: "Corpo da requisicao invalido.",
+        message: "Muitas verificacoes de pagamento em pouco tempo. Aguarde e tente novamente.",
       },
-      { status: 400 },
-    );
-  }
-
-  const ownerId = (body.ownerId ?? "").trim();
-  if (!ownerId) {
-    return NextResponse.json(
       {
-        ok: false,
-        message: "ownerId e obrigatorio.",
+        status: 429,
+        headers: {
+          "Retry-After": String(rateLimit.retryAfterSeconds),
+        },
       },
-      { status: 400 },
     );
   }
 

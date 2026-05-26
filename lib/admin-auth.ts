@@ -3,15 +3,19 @@
 export const ADMIN_COOKIE_NAME = "pettapbr_admin";
 
 const SESSION_TTL_DAYS = 7;
+const MIN_SECRET_LENGTH = 24;
 
 function getAdminSecret() {
-  return process.env.PETTAPBR_ADMIN_SECRET || "pettapbr-admin-local-secret";
+  return (process.env.PETTAPBR_ADMIN_SECRET ?? "").trim();
 }
 
 export function getAdminCredentials() {
+  const email = (process.env.PETTAPBR_ADMIN_EMAIL ?? "").trim().toLowerCase();
+  const password = process.env.PETTAPBR_ADMIN_PASSWORD ?? "";
+
   return {
-    email: process.env.PETTAPBR_ADMIN_EMAIL || "admin@pettapbr.com",
-    password: process.env.PETTAPBR_ADMIN_PASSWORD || "admin123",
+    email,
+    password,
   };
 }
 
@@ -19,7 +23,27 @@ function signPayload(payload: string) {
   return createHmac("sha256", getAdminSecret()).update(payload).digest("hex");
 }
 
+export function getAdminAuthConfigError() {
+  const { email, password } = getAdminCredentials();
+  const secret = getAdminSecret();
+
+  if (!email || !password || !secret) {
+    return "Configure PETTAPBR_ADMIN_EMAIL, PETTAPBR_ADMIN_PASSWORD e PETTAPBR_ADMIN_SECRET.";
+  }
+
+  if (secret.length < MIN_SECRET_LENGTH) {
+    return `PETTAPBR_ADMIN_SECRET deve ter ao menos ${MIN_SECRET_LENGTH} caracteres.`;
+  }
+
+  return null;
+}
+
 export function createAdminSessionToken() {
+  const configError = getAdminAuthConfigError();
+  if (configError) {
+    throw new Error(configError);
+  }
+
   const issuedAt = Date.now().toString();
   const payload = `admin|${issuedAt}`;
   const signature = signPayload(payload);
@@ -28,6 +52,10 @@ export function createAdminSessionToken() {
 }
 
 export function isValidAdminSessionToken(token: string | undefined) {
+  if (getAdminAuthConfigError()) {
+    return false;
+  }
+
   if (!token) {
     return false;
   }

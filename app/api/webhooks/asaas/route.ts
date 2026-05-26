@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "crypto";
 import { NextResponse } from "next/server";
 
 import { getAsaasPayment, type AsaasPayment } from "@/lib/asaas";
@@ -6,6 +7,8 @@ import {
   isAsaasPaymentSettled,
   resolveRenewalMonths,
 } from "@/lib/plan-billing";
+import { consumeRateLimit } from "@/lib/rate-limit";
+import { getRequestIp } from "@/lib/request-security";
 import { createSupabaseServerClient, hasSupabaseServerClient } from "@/lib/supabase-server";
 
 interface AsaasWebhookPayment {
@@ -60,6 +63,17 @@ const INACTIVATION_EVENTS = new Set(["SUBSCRIPTION_INACTIVATED", "SUBSCRIPTION_D
 
 function normalize(value: string | null | undefined) {
   return (value ?? "").trim();
+}
+
+function safeTokenCompare(left: string, right: string) {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+
+  if (leftBuffer.length !== rightBuffer.length) {
+    return false;
+  }
+
+  return timingSafeEqual(leftBuffer, rightBuffer);
 }
 
 function pickPaymentUrl(payment: {
@@ -184,6 +198,27 @@ async function applyPaidPlan(
 }
 
 export async function POST(request: Request) {
+  const rateLimit = consumeRateLimit({
+    key: `asaas-webhook:${getRequestIp(request)}`,
+    maxRequests: 1200,
+    windowMs: 60 * 60 * 1000,
+  });
+
+  if (!rateLimit.ok) {
+    return NextResponse.json(
+      {
+        ok: false,
+        message: "Muitas chamadas de webhook em pouco tempo.",
+      },
+      {
+        status: 429,
+        headers: {
+          "Retry-After": String(rateLimit.retryAfterSeconds),
+        },
+      },
+    );
+  }
+
   const webhookToken = process.env.ASAAS_WEBHOOK_TOKEN?.trim();
   if (!webhookToken) {
     return NextResponse.json(
@@ -200,14 +235,14 @@ export async function POST(request: Request) {
       {
         ok: false,
         message:
-          "Configure NEXT_PUBLIC_SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY (ou NEXT_PUBLIC_SUPABASE_ANON_KEY) para processar webhooks.",
+          "Configure NEXT_PUBLIC_SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY para processar webhooks.",
       },
       { status: 500 },
     );
   }
 
   const providedToken = normalize(request.headers.get("asaas-access-token"));
-  if (providedToken !== webhookToken) {
+  if (!providedToken || !safeTokenCompare(providedToken, webhookToken)) {
     return NextResponse.json(
       {
         ok: false,
@@ -240,6 +275,7 @@ export async function POST(request: Request) {
   const supabase = createSupabaseServerClient();
 
   if (ACTIVATION_EVENTS.has(event)) {
+    const isCheckoutPaidEvent = event === "CHECKOUT_PAID";
     let paymentId = normalize(payload.payment?.id);
     let payment: AsaasPayment | null = null;
 
@@ -255,7 +291,7 @@ export async function POST(request: Request) {
         transactionReceiptUrl: payload.payment?.transactionReceiptUrl ?? null,
       };
 
-      if (!payment.externalReference || !isAsaasPaymentSettled(payment.status)) {
+      if (!isAsaasPaymentSettled(payment.status)) {
         try {
           const fetchedPayment = await getAsaasPayment(paymentId);
           payment = fetchedPayment;
@@ -285,6 +321,14 @@ export async function POST(request: Request) {
         action: "activated",
         matchBy,
         expiresAt: applyResult.expiresAt,
+      });
+    }
+
+    if (!isCheckoutPaidEvent) {
+      return NextResponse.json({
+        ok: true,
+        action: "awaiting_payment_confirmation",
+        matchBy,
       });
     }
 

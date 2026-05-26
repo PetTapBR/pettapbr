@@ -8,109 +8,16 @@ import { PetPublicProfile } from "@/components/pet-public-profile";
 import { usePetTap } from "@/context/pettap-provider";
 import { formatViewerGpsLocation, reverseGeocodeLabel } from "@/lib/geocode-client";
 import { isOwnerPro } from "@/lib/owner-defaults";
-import { supabase } from "@/lib/supabase";
 import type { NfcTag, NfcTagStatus, Pet } from "@/lib/types";
 import { normalizeTagCode } from "@/lib/utils";
 
-interface NfcTagRow {
-  id: string;
-  code: string;
-  activation_code: string;
-  owner_id: string | null;
-  pet_id: string | null;
-  status: NfcTagStatus;
-  created_at: string;
-  updated_at: string;
-}
-
-interface PetRow {
-  id: string;
-  owner_id: string;
-  slug: string;
-  name: string;
-  bio: string;
-  age: string;
-  breed: string;
-  weight: string;
-  city: string;
-  avatar_url: string;
-  whatsapp: string;
-  phone: string;
-  location_url: string;
-  location_lat: number | null;
-  location_lng: number | null;
-  location_label: string;
-  reward: string;
-  status: "safe" | "lost" | "found";
-  allergies: string;
-  medications: string;
-  vaccines: string;
-  created_at: string;
-  updated_at: string;
-}
-
-interface PetMediaRow {
-  id: string;
-  pet_id: string;
-  media_type: "photo" | "video";
-  url: string;
-  caption: string;
-}
-
-interface OwnerRow {
-  id: string;
-  full_name: string;
-  plan_tier: "start" | "pro" | null;
-  plan_status: "active" | "inactive" | null;
-}
-
-function mapTagRow(row: NfcTagRow): NfcTag {
-  return {
-    id: row.id,
-    code: normalizeTagCode(row.code),
-    activationCode: (row.activation_code ?? "").trim().toUpperCase(),
-    ownerId: row.owner_id,
-    petId: row.pet_id,
-    status: row.status,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
-
-function mapPetRow(row: PetRow, mediaRows: PetMediaRow[]): Pet {
-  return {
-    id: row.id,
-    ownerId: row.owner_id,
-    slug: row.slug,
-    name: row.name,
-    bio: row.bio,
-    age: row.age,
-    breed: row.breed,
-    weight: row.weight,
-    city: row.city,
-    avatarUrl: row.avatar_url,
-    whatsapp: row.whatsapp,
-    phone: row.phone,
-    locationUrl: row.location_url,
-    locationLat: row.location_lat,
-    locationLng: row.location_lng,
-    locationLabel: row.location_label,
-    reward: row.reward,
-    status: row.status,
-    medical: {
-      allergies: row.allergies,
-      medications: row.medications,
-      vaccines: row.vaccines,
-    },
-    gallery: mediaRows.map((media) => ({
-      id: media.id,
-      type: media.media_type,
-      url: media.url,
-      caption: media.caption,
-    })),
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
+interface PublicTagResponse {
+  ok: boolean;
+  message?: string;
+  tag?: Pick<NfcTag, "id" | "code" | "ownerId" | "petId" | "status"> | null;
+  pet?: Pet | null;
+  ownerName?: string;
+  isPremiumPlan?: boolean;
 }
 
 export default function PublicNfcTagPage() {
@@ -133,15 +40,11 @@ export default function PublicNfcTagPage() {
   const [petId, setPetId] = useState("");
   const [feedback, setFeedback] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [remoteTagResult, setRemoteTagResult] = useState<{ code: string; tag: NfcTag | null } | null>(
-    null,
-  );
-  const [remotePetResult, setRemotePetResult] = useState<{ petId: string; pet: Pet | null } | null>(
-    null,
-  );
-  const [remoteOwnerResult, setRemoteOwnerResult] = useState<{
-    ownerId: string;
-    name: string;
+  const [remoteTagResult, setRemoteTagResult] = useState<{
+    code: string;
+    tag: NfcTag | null;
+    pet: Pet | null;
+    ownerName: string;
     isPremiumPlan: boolean;
   } | null>(null);
 
@@ -158,17 +61,10 @@ export default function PublicNfcTagPage() {
   const hasRemoteTagForCode = remoteTagResult?.code === tagCode;
   const remoteTag = hasRemoteTagForCode ? (remoteTagResult?.tag ?? null) : null;
   const tag = localTag ?? remoteTag;
-  const isTagResolved = !isReady ? false : Boolean(localTag) || hasRemoteTagForCode || !supabase;
-
-  const needsRemotePetLookup = Boolean(tag && tag.status === "active" && tag.petId && !localPet);
-  const hasRemotePetForTag = Boolean(tag?.petId && remotePetResult?.petId === tag.petId);
-  const remotePet = hasRemotePetForTag ? (remotePetResult?.pet ?? null) : null;
+  const isTagResolved = !isReady ? false : Boolean(localTag) || hasRemoteTagForCode;
+  const remotePet = hasRemoteTagForCode ? (remoteTagResult?.pet ?? null) : null;
   const pet = localPet ?? remotePet;
-  const isPetResolved = !isReady
-    ? false
-    : !isTagResolved || !needsRemotePetLookup
-      ? true
-      : hasRemotePetForTag || !supabase;
+  const isPetResolved = !isReady ? false : !isTagResolved ? true : Boolean(localPet) || hasRemoteTagForCode;
   const eligiblePets = useMemo(() => {
     const linkedPetIds = new Set<string>();
 
@@ -201,47 +97,71 @@ export default function PublicNfcTagPage() {
   const localOwner = pet?.ownerId ? (state.owners.find((owner) => owner.id === pet.ownerId) ?? null) : null;
   const localOwnerName = localOwner?.fullName ?? "";
   const localOwnerIsPremium = isOwnerPro(localOwner);
-  const remoteOwnerName =
-    pet?.ownerId && remoteOwnerResult?.ownerId === pet.ownerId ? remoteOwnerResult.name : "";
-  const remoteOwnerIsPremium =
-    pet?.ownerId && remoteOwnerResult?.ownerId === pet.ownerId ? remoteOwnerResult.isPremiumPlan : false;
+  const remoteOwnerName = hasRemoteTagForCode ? (remoteTagResult?.ownerName ?? "") : "";
+  const remoteOwnerIsPremium = hasRemoteTagForCode ? Boolean(remoteTagResult?.isPremiumPlan) : false;
   const ownerName = localOwnerName || remoteOwnerName || "Tutor";
   const isPremiumPlan = localOwner ? localOwnerIsPremium : remoteOwnerIsPremium;
 
   const recordedRef = useRef<string>("");
 
   useEffect(() => {
-    if (!isReady || localTag || !supabase) {
+    if (!isReady || localTag) {
       return;
     }
 
-    const supabaseClient = supabase;
     let isMounted = true;
 
     async function fetchTagByCode() {
-      const { data, error } = await supabaseClient
-        .from("nfc_tags")
-        .select("id, code, activation_code, owner_id, pet_id, status, created_at, updated_at")
-        .eq("code", tagCode)
-        .limit(1);
+      try {
+        const response = await fetch(`/api/public/tag?tagCode=${encodeURIComponent(tagCode)}`);
+        const payload = (await response.json()) as PublicTagResponse;
 
-      if (!isMounted) {
-        return;
-      }
+        if (!isMounted) {
+          return;
+        }
 
-      if (error) {
+        if (!response.ok || !payload.ok) {
+          setRemoteTagResult({
+            code: tagCode,
+            tag: null,
+            pet: null,
+            ownerName: "Tutor",
+            isPremiumPlan: false,
+          });
+          return;
+        }
+
+        setRemoteTagResult({
+          code: tagCode,
+          tag: payload.tag
+            ? {
+                id: payload.tag.id,
+                code: normalizeTagCode(payload.tag.code),
+                activationCode: "",
+                ownerId: payload.tag.ownerId ?? null,
+                petId: payload.tag.petId ?? null,
+                status: payload.tag.status as NfcTagStatus,
+                createdAt: "",
+                updatedAt: "",
+              }
+            : null,
+          pet: payload.pet ?? null,
+          ownerName: (payload.ownerName ?? "Tutor").trim() || "Tutor",
+          isPremiumPlan: Boolean(payload.isPremiumPlan),
+        });
+      } catch {
+        if (!isMounted) {
+          return;
+        }
+
         setRemoteTagResult({
           code: tagCode,
           tag: null,
+          pet: null,
+          ownerName: "Tutor",
+          isPremiumPlan: false,
         });
-        return;
       }
-
-      const row = (data?.[0] ?? null) as NfcTagRow | null;
-      setRemoteTagResult({
-        code: tagCode,
-        tag: row ? mapTagRow(row) : null,
-      });
     }
 
     void fetchTagByCode();
@@ -250,112 +170,6 @@ export default function PublicNfcTagPage() {
       isMounted = false;
     };
   }, [isReady, localTag, tagCode]);
-
-  useEffect(() => {
-    if (!isReady || !isTagResolved || !needsRemotePetLookup || !tag?.petId || !supabase) {
-      return;
-    }
-
-    const supabaseClient = supabase;
-    const petIdFromTag = tag.petId;
-    let isMounted = true;
-
-    async function fetchPetByTag() {
-      const [{ data: petRows, error: petError }, { data: mediaRows, error: mediaError }] =
-        await Promise.all([
-          supabaseClient
-            .from("pets")
-            .select(
-              "id, owner_id, slug, name, bio, age, breed, weight, city, avatar_url, whatsapp, phone, location_url, location_lat, location_lng, location_label, reward, status, allergies, medications, vaccines, created_at, updated_at",
-            )
-            .eq("id", petIdFromTag)
-            .limit(1),
-          supabaseClient.from("pet_media").select("id, pet_id, media_type, url, caption").eq("pet_id", petIdFromTag),
-        ]);
-
-      if (!isMounted) {
-        return;
-      }
-
-      if (petError || mediaError) {
-        setRemotePetResult({
-          petId: petIdFromTag,
-          pet: null,
-        });
-        return;
-      }
-
-      const petRow = (petRows?.[0] ?? null) as PetRow | null;
-
-      if (!petRow) {
-        setRemotePetResult({
-          petId: petIdFromTag,
-          pet: null,
-        });
-        return;
-      }
-
-      const galleryRows = (mediaRows ?? []) as PetMediaRow[];
-      setRemotePetResult({
-        petId: petIdFromTag,
-        pet: mapPetRow(petRow, galleryRows),
-      });
-    }
-
-    void fetchPetByTag();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [isReady, isTagResolved, needsRemotePetLookup, tag?.petId]);
-
-  useEffect(() => {
-    if (!pet?.ownerId || localOwnerName || !supabase) {
-      return;
-    }
-
-    if (remoteOwnerResult?.ownerId === pet.ownerId) {
-      return;
-    }
-
-    const supabaseClient = supabase;
-    const ownerId = pet.ownerId;
-    let isMounted = true;
-
-    async function fetchOwnerName() {
-      const { data, error } = await supabaseClient
-        .from("owners")
-        .select("id, full_name, plan_tier, plan_status")
-        .eq("id", ownerId)
-        .limit(1);
-
-      if (!isMounted) {
-        return;
-      }
-
-      if (error) {
-        return;
-      }
-
-      const row = (data?.[0] ?? null) as OwnerRow | null;
-
-      if (!row) {
-        return;
-      }
-
-      setRemoteOwnerResult({
-        ownerId: row.id,
-        name: row.full_name || "Tutor",
-        isPremiumPlan: row.plan_tier === "pro" && row.plan_status !== "inactive",
-      });
-    }
-
-    void fetchOwnerName();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [localOwnerName, pet?.ownerId, remoteOwnerResult?.ownerId]);
 
   useEffect(() => {
     if (!pet) {

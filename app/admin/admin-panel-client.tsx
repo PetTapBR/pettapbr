@@ -1,175 +1,142 @@
-﻿"use client";
+"use client";
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { usePetTap } from "@/context/pettap-provider";
-import { supabase } from "@/lib/supabase";
 import type { NfcTagStatus } from "@/lib/types";
 
-interface RelatedOwnerRow {
-  id: string;
-  full_name: string;
-  email: string;
-}
-
-interface RelatedPetRow {
-  id: string;
-  name: string;
-}
-
-interface AdminNfcTagRow {
+interface AdminTagView {
   id: string;
   code: string;
-  activation_code: string;
-  owner_id: string | null;
-  pet_id: string | null;
+  activationCode: string;
+  ownerId: string | null;
+  petId: string | null;
   status: NfcTagStatus;
-  created_at: string;
-  updated_at: string;
-  owner: RelatedOwnerRow | RelatedOwnerRow[] | null;
-  pet: RelatedPetRow | RelatedPetRow[] | null;
+  createdAt: string;
+  updatedAt: string;
+  owner: {
+    id: string;
+    fullName: string;
+    email: string;
+  } | null;
+  pet: {
+    id: string;
+    name: string;
+  } | null;
 }
 
-function asSingleRow<T>(value: T | T[] | null | undefined): T | null {
-  if (!value) {
-    return null;
-  }
+interface AdminTagsResponse {
+  ok: boolean;
+  message?: string;
+  tags?: AdminTagView[];
+}
 
-  return Array.isArray(value) ? value[0] ?? null : value;
+interface AdminCreateTagResponse {
+  ok: boolean;
+  message?: string;
+  tag?: AdminTagView;
+}
+
+interface AdminMutationResponse {
+  ok: boolean;
+  message?: string;
 }
 
 export function AdminPanelClient() {
   const router = useRouter();
-
-  const {
-    state,
-    createNfcTag,
-    setNfcTagStatus,
-    unlinkNfcTag,
-  } = usePetTap();
-
+  const [tags, setTags] = useState<AdminTagView[]>([]);
   const [tagCodeInput, setTagCodeInput] = useState("");
   const [activationCodeInput, setActivationCodeInput] = useState("");
   const [feedback, setFeedback] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [resolvedOwnerPetByTagId, setResolvedOwnerPetByTagId] = useState<
-    Record<string, { ownerName: string | null; ownerEmail: string | null; petName: string | null }>
-  >({});
-
-  const refreshOwnerPetResolution = useCallback(async () => {
-    if (!supabase) {
-      return;
-    }
-
-    const { data, error } = await supabase
-      .from("nfc_tags")
-      .select(
-        "id, owner_id, pet_id, owner:owners(id, full_name, email), pet:pets(id, name)",
-      );
-
-    if (error || !data) {
-      return;
-    }
-
-    const nextMap: Record<string, { ownerName: string | null; ownerEmail: string | null; petName: string | null }> =
-      {};
-
-    for (const row of data as AdminNfcTagRow[]) {
-      const ownerRow = asSingleRow(row.owner);
-      const petRow = asSingleRow(row.pet);
-
-      nextMap[row.id] = {
-        ownerName: ownerRow?.full_name ?? null,
-        ownerEmail: ownerRow?.email ?? null,
-        petName: petRow?.name ?? null,
-      };
-    }
-
-    setResolvedOwnerPetByTagId(nextMap);
-  }, []);
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      void refreshOwnerPetResolution();
-    }, 0);
-
-    return () => {
-      clearTimeout(timer);
-    };
-  }, [refreshOwnerPetResolution, state.nfcTags.length, state.owners.length, state.pets.length]);
-
-  const tagRows = useMemo(
-    () =>
-      [...state.nfcTags].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map((tag) => {
-        const ownerFromState = tag.ownerId
-          ? state.owners.find((ownerCandidate) => ownerCandidate.id === tag.ownerId)
-          : null;
-
-        const petFromState = tag.petId
-          ? state.pets.find((petCandidate) => petCandidate.id === tag.petId)
-          : null;
-
-        const resolved = resolvedOwnerPetByTagId[tag.id];
-        const owner = ownerFromState
-          ? {
-              fullName: ownerFromState.fullName,
-              email: ownerFromState.email,
-            }
-          : resolved
-            ? {
-                fullName: resolved.ownerName ?? "Nao vinculado",
-                email: resolved.ownerEmail ?? "",
-              }
-            : null;
-
-        const pet = petFromState
-          ? {
-              name: petFromState.name,
-            }
-          : resolved
-            ? {
-                name: resolved.petName ?? "Sem pet",
-              }
-            : null;
-
-        return {
-          tag,
-          owner,
-          pet,
-        };
-      }),
-    [resolvedOwnerPetByTagId, state.nfcTags, state.owners, state.pets],
-  );
+  const [isLoadingTags, setIsLoadingTags] = useState(true);
 
   const baseUrl =
     typeof window !== "undefined" ? window.location.origin : "https://seu-dominio.com";
+
+  const tagRows = useMemo(
+    () => [...tags].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+    [tags],
+  );
+
+  const fetchTags = useCallback(async () => {
+    setIsLoadingTags(true);
+
+    try {
+      const response = await fetch("/api/admin/tags", {
+        method: "GET",
+        credentials: "include",
+      });
+      const data = (await response.json()) as AdminTagsResponse;
+
+      if (response.status === 401) {
+        router.push("/login?next=/admin");
+        return;
+      }
+
+      if (!response.ok || !data.ok) {
+        setFeedback(data.message ?? "Nao foi possivel listar as tags NFC.");
+        return;
+      }
+
+      setTags(data.tags ?? []);
+    } catch {
+      setFeedback("Falha de conexao ao listar tags NFC.");
+    } finally {
+      setIsLoadingTags(false);
+    }
+  }, [router]);
+
+  useEffect(() => {
+    const timerId = window.setTimeout(() => {
+      void fetchTags();
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timerId);
+    };
+  }, [fetchTags]);
 
   async function handleCreateTag(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setIsSubmitting(true);
     setFeedback("Criando tag NFC...");
 
-    const result = await createNfcTag({
-      code: tagCodeInput,
-      activationCode: activationCodeInput,
-    });
+    try {
+      const response = await fetch("/api/admin/tags", {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          code: tagCodeInput,
+          activationCode: activationCodeInput,
+        }),
+      });
 
-    setIsSubmitting(false);
+      const data = (await response.json()) as AdminCreateTagResponse;
 
-    if (!result.ok) {
-      setFeedback(result.message ?? "Nao foi possivel criar tag NFC.");
-      return;
+      if (response.status === 401) {
+        router.push("/login?next=/admin");
+        return;
+      }
+
+      if (!response.ok || !data.ok || !data.tag) {
+        setFeedback(data.message ?? "Nao foi possivel criar tag NFC.");
+        return;
+      }
+
+      setTagCodeInput("");
+      setActivationCodeInput("");
+      setFeedback(`Tag ${data.tag.code} criada com sucesso. Link NFC: ${baseUrl}/t/${data.tag.code}`);
+      setTags((prev) => [data.tag!, ...prev]);
+    } catch {
+      setFeedback("Falha de conexao ao criar tag NFC.");
+    } finally {
+      setIsSubmitting(false);
     }
-
-    setTagCodeInput("");
-    setActivationCodeInput("");
-
-    setFeedback(
-      `Tag ${result.tag?.code ?? ""} criada com sucesso. Link NFC: ${baseUrl}/t/${result.tag?.code}`,
-    );
-    void refreshOwnerPetResolution();
   }
 
   async function handleCopy(link: string) {
@@ -181,8 +148,41 @@ export function AdminPanelClient() {
     }
   }
 
+  async function mutateTag(tagId: string, payload: { action: "setStatus"; status: NfcTagStatus } | { action: "unlink" }) {
+    const response = await fetch(`/api/admin/tags/${encodeURIComponent(tagId)}`, {
+      method: "PATCH",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const data = (await response.json()) as AdminMutationResponse;
+
+    if (response.status === 401) {
+      router.push("/login?next=/admin");
+      return {
+        ok: false,
+        message: "Sessao admin expirada. Faca login novamente.",
+      };
+    }
+
+    if (!response.ok || !data.ok) {
+      return {
+        ok: false,
+        message: data.message ?? "Falha ao atualizar tag NFC.",
+      };
+    }
+
+    return { ok: true };
+  }
+
   async function handleLogout() {
-    await fetch("/api/admin/logout", { method: "POST" });
+    await fetch("/api/admin/logout", {
+      method: "POST",
+      credentials: "include",
+    });
     router.push("/login?next=/admin");
   }
 
@@ -272,7 +272,7 @@ export function AdminPanelClient() {
               </tr>
             </thead>
             <tbody>
-              {tagRows.map(({ tag, owner, pet }) => {
+              {tagRows.map((tag) => {
                 const nfcLink = `${baseUrl}/t/${tag.code}`;
 
                 return (
@@ -281,9 +281,9 @@ export function AdminPanelClient() {
                     <td className="px-3 py-3 uppercase">{tag.status}</td>
                     <td className="px-3 py-3 font-mono text-xs">{tag.activationCode}</td>
                     <td className="px-3 py-3">
-                      <p>{owner?.fullName ?? "Nao vinculado"}</p>
-                      <p className="text-xs text-zinc-500">{owner?.email ?? "Sem e-mail"}</p>
-                      <p className="text-xs text-zinc-400">{pet?.name ?? "Sem pet"}</p>
+                      <p>{tag.owner?.fullName ?? "Nao vinculado"}</p>
+                      <p className="text-xs text-zinc-500">{tag.owner?.email ?? "Sem e-mail"}</p>
+                      <p className="text-xs text-zinc-400">{tag.pet?.name ?? "Sem pet"}</p>
                     </td>
                     <td className="px-3 py-3">
                       <div className="flex flex-col gap-2">
@@ -296,7 +296,7 @@ export function AdminPanelClient() {
                         </Link>
                         <button
                           type="button"
-                          onClick={() => handleCopy(nfcLink)}
+                          onClick={() => void handleCopy(nfcLink)}
                           className="rounded-full border border-cyan-300/35 bg-cyan-500/15 px-3 py-1 text-xs uppercase tracking-[0.12em] text-cyan-100"
                         >
                           Copiar
@@ -309,11 +309,18 @@ export function AdminPanelClient() {
                           type="button"
                           onClick={async () => {
                             const nextStatus = tag.status === "disabled" ? "active" : "disabled";
-                            const result = await setNfcTagStatus(tag.id, nextStatus);
-                            setFeedback(result.ok ? `Status da tag ${tag.code} atualizado.` : result.message ?? "Falha ao atualizar status.");
-                            if (result.ok) {
-                              void refreshOwnerPetResolution();
+                            const result = await mutateTag(tag.id, {
+                              action: "setStatus",
+                              status: nextStatus,
+                            });
+
+                            if (!result.ok) {
+                              setFeedback(result.message ?? "Falha ao atualizar status.");
+                              return;
                             }
+
+                            setFeedback(`Status da tag ${tag.code} atualizado.`);
+                            void fetchTags();
                           }}
                           className="rounded-full border border-white/15 px-3 py-1 text-xs uppercase tracking-[0.12em]"
                         >
@@ -322,11 +329,14 @@ export function AdminPanelClient() {
                         <button
                           type="button"
                           onClick={async () => {
-                            const result = await unlinkNfcTag(tag.id);
-                            setFeedback(result.ok ? `Tag ${tag.code} desvinculada.` : result.message ?? "Falha ao desvincular.");
-                            if (result.ok) {
-                              void refreshOwnerPetResolution();
+                            const result = await mutateTag(tag.id, { action: "unlink" });
+                            if (!result.ok) {
+                              setFeedback(result.message ?? "Falha ao desvincular.");
+                              return;
                             }
+
+                            setFeedback(`Tag ${tag.code} desvinculada.`);
+                            void fetchTags();
                           }}
                           className="rounded-full border border-rose-300/40 bg-rose-500/10 px-3 py-1 text-xs uppercase tracking-[0.12em] text-rose-100"
                         >
@@ -337,10 +347,17 @@ export function AdminPanelClient() {
                   </tr>
                 );
               })}
-              {tagRows.length === 0 && (
+              {!isLoadingTags && tagRows.length === 0 && (
                 <tr>
                   <td className="px-3 py-4 text-zinc-400" colSpan={6}>
                     Nenhuma tag NFC cadastrada.
+                  </td>
+                </tr>
+              )}
+              {isLoadingTags && (
+                <tr>
+                  <td className="px-3 py-4 text-zinc-400" colSpan={6}>
+                    Carregando tags...
                   </td>
                 </tr>
               )}

@@ -1,13 +1,20 @@
 import { NextResponse } from "next/server";
 
+import { consumeRateLimit } from "@/lib/rate-limit";
+import { requireAuthenticatedUser } from "@/lib/request-auth";
+import { getRequestIp } from "@/lib/request-security";
 import { createSupabaseServerClient, hasSupabaseServerClient } from "@/lib/supabase-server";
 
 interface ClearNotificationsBody {
-  ownerId?: string;
   notificationId?: string;
 }
 
 export async function POST(request: Request) {
+  const auth = await requireAuthenticatedUser(request);
+  if (!auth.ok) {
+    return auth.response;
+  }
+
   if (!hasSupabaseServerClient()) {
     return NextResponse.json(
       {
@@ -31,16 +38,26 @@ export async function POST(request: Request) {
     );
   }
 
-  const ownerId = (body.ownerId ?? "").trim();
   const notificationId = (body.notificationId ?? "").trim();
+  const ownerId = auth.user.id;
+  const rateLimit = consumeRateLimit({
+    key: `notifications-clear:${ownerId}:${getRequestIp(request)}`,
+    maxRequests: 240,
+    windowMs: 60 * 60 * 1000,
+  });
 
-  if (!ownerId) {
+  if (!rateLimit.ok) {
     return NextResponse.json(
       {
         ok: false,
-        message: "ownerId e obrigatorio.",
+        message: "Muitas operacoes de notificacao em pouco tempo.",
       },
-      { status: 400 },
+      {
+        status: 429,
+        headers: {
+          "Retry-After": String(rateLimit.retryAfterSeconds),
+        },
+      },
     );
   }
 

@@ -8,7 +8,6 @@ import { PetPublicProfile } from "@/components/pet-public-profile";
 import { usePetTap } from "@/context/pettap-provider";
 import { formatViewerGpsLocation, reverseGeocodeLabel } from "@/lib/geocode-client";
 import { isOwnerPro } from "@/lib/owner-defaults";
-import { supabase } from "@/lib/supabase";
 import type { Pet, ScanSource } from "@/lib/types";
 
 function parseSource(raw: string | null): ScanSource {
@@ -19,81 +18,12 @@ function parseSource(raw: string | null): ScanSource {
   return "direct";
 }
 
-interface OwnerRow {
-  id: string;
-  full_name: string;
-  plan_tier: "start" | "pro" | null;
-  plan_status: "active" | "inactive" | null;
-}
-
-interface PetRow {
-  id: string;
-  owner_id: string;
-  slug: string;
-  name: string;
-  bio: string;
-  age: string;
-  breed: string;
-  weight: string;
-  city: string;
-  avatar_url: string;
-  whatsapp: string;
-  phone: string;
-  location_url: string;
-  location_lat: number | null;
-  location_lng: number | null;
-  location_label: string;
-  reward: string;
-  status: "safe" | "lost" | "found";
-  allergies: string;
-  medications: string;
-  vaccines: string;
-  created_at: string;
-  updated_at: string;
-}
-
-interface PetMediaRow {
-  id: string;
-  pet_id: string;
-  media_type: "photo" | "video";
-  url: string;
-  caption: string;
-}
-
-function mapPetRow(row: PetRow, mediaRows: PetMediaRow[]): Pet {
-  return {
-    id: row.id,
-    ownerId: row.owner_id,
-    slug: row.slug,
-    name: row.name,
-    bio: row.bio,
-    age: row.age,
-    breed: row.breed,
-    weight: row.weight,
-    city: row.city,
-    avatarUrl: row.avatar_url,
-    whatsapp: row.whatsapp,
-    phone: row.phone,
-    locationUrl: row.location_url,
-    locationLat: row.location_lat,
-    locationLng: row.location_lng,
-    locationLabel: row.location_label,
-    reward: row.reward,
-    status: row.status,
-    medical: {
-      allergies: row.allergies,
-      medications: row.medications,
-      vaccines: row.vaccines,
-    },
-    gallery: mediaRows.map((media) => ({
-      id: media.id,
-      type: media.media_type,
-      url: media.url,
-      caption: media.caption,
-    })),
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
+interface PublicPetResponse {
+  ok: boolean;
+  message?: string;
+  pet?: Pet | null;
+  ownerName?: string;
+  isPremiumPlan?: boolean;
 }
 
 export default function PublicPetPage() {
@@ -108,14 +38,12 @@ export default function PublicPetPage() {
 
   const [detectedLocation, setDetectedLocation] = useState("");
   const [detectedLocationReady, setDetectedLocationReady] = useState(false);
-  const [remoteOwnerResult, setRemoteOwnerResult] = useState<{
-    ownerId: string;
-    name: string;
+  const [remotePetResult, setRemotePetResult] = useState<{
+    slug: string;
+    pet: Pet | null;
+    ownerName: string;
     isPremiumPlan: boolean;
   } | null>(null);
-  const [remotePetResult, setRemotePetResult] = useState<{ slug: string; pet: Pet | null } | null>(
-    null,
-  );
   const location = manualLocation ?? detectedLocation;
   const locationReady = manualLocation ? true : detectedLocationReady;
 
@@ -123,20 +51,18 @@ export default function PublicPetPage() {
   const hasRemotePetForSlug = remotePetResult?.slug === slug;
   const remotePet = hasRemotePetForSlug ? (remotePetResult?.pet ?? null) : null;
   const pet = localPet ?? remotePet;
-  const isPetResolved = !isReady ? false : Boolean(localPet) || hasRemotePetForSlug || !supabase;
+  const isPetResolved = !isReady ? false : Boolean(localPet) || hasRemotePetForSlug;
   const localOwner = pet?.ownerId ? (state.owners.find((owner) => owner.id === pet.ownerId) ?? null) : null;
   const localOwnerName = localOwner?.fullName ?? "";
   const localOwnerIsPremium = isOwnerPro(localOwner);
-  const remoteOwnerName =
-    pet?.ownerId && remoteOwnerResult?.ownerId === pet.ownerId ? remoteOwnerResult.name : "";
-  const remoteOwnerIsPremium =
-    pet?.ownerId && remoteOwnerResult?.ownerId === pet.ownerId ? remoteOwnerResult.isPremiumPlan : false;
+  const remoteOwnerName = hasRemotePetForSlug ? (remotePetResult?.ownerName ?? "") : "";
+  const remoteOwnerIsPremium = hasRemotePetForSlug ? Boolean(remotePetResult?.isPremiumPlan) : false;
   const ownerName = localOwnerName || remoteOwnerName || "Tutor";
   const isPremiumPlan = localOwner ? localOwnerIsPremium : remoteOwnerIsPremium;
   const recordedRef = useRef<string>("");
 
   useEffect(() => {
-    if (!isReady || localPet || !supabase) {
+    if (!isReady || localPet) {
       return;
     }
 
@@ -144,79 +70,46 @@ export default function PublicPetPage() {
       return;
     }
 
-    const supabaseClient = supabase;
     const slugOrId = slug;
     let isMounted = true;
 
     async function fetchPublicPet() {
-      const petColumns =
-        "id, owner_id, slug, name, bio, age, breed, weight, city, avatar_url, whatsapp, phone, location_url, location_lat, location_lng, location_label, reward, status, allergies, medications, vaccines, created_at, updated_at";
-
-      const { data: petBySlugRows, error: petBySlugError } = await supabaseClient
-        .from("pets")
-        .select(petColumns)
-        .eq("slug", slugOrId)
-        .limit(1);
-
-      if (!isMounted) {
-        return;
-      }
-
-      if (petBySlugError) {
-        setRemotePetResult({
-          slug: slugOrId,
-          pet: null,
-        });
-        return;
-      }
-
-      let petRow = (petBySlugRows?.[0] ?? null) as PetRow | null;
-
-      if (!petRow) {
-        const { data: petByIdRows, error: petByIdError } = await supabaseClient
-          .from("pets")
-          .select(petColumns)
-          .eq("id", slugOrId)
-          .limit(1);
+      try {
+        const response = await fetch(`/api/public/pet?slug=${encodeURIComponent(slugOrId)}`);
+        const payload = (await response.json()) as PublicPetResponse;
 
         if (!isMounted) {
           return;
         }
 
-        if (petByIdError) {
+        if (!response.ok || !payload.ok) {
           setRemotePetResult({
             slug: slugOrId,
             pet: null,
+            ownerName: "Tutor",
+            isPremiumPlan: false,
           });
           return;
         }
 
-        petRow = (petByIdRows?.[0] ?? null) as PetRow | null;
-      }
+        setRemotePetResult({
+          slug: slugOrId,
+          pet: payload.pet ?? null,
+          ownerName: (payload.ownerName ?? "Tutor").trim() || "Tutor",
+          isPremiumPlan: Boolean(payload.isPremiumPlan),
+        });
+      } catch {
+        if (!isMounted) {
+          return;
+        }
 
-      if (!petRow) {
         setRemotePetResult({
           slug: slugOrId,
           pet: null,
+          ownerName: "Tutor",
+          isPremiumPlan: false,
         });
-        return;
       }
-
-      const { data: mediaRows, error: mediaError } = await supabaseClient
-        .from("pet_media")
-        .select("id, pet_id, media_type, url, caption")
-        .eq("pet_id", petRow.id);
-
-      if (!isMounted) {
-        return;
-      }
-
-      const galleryRows = mediaError ? [] : ((mediaRows ?? []) as PetMediaRow[]);
-
-      setRemotePetResult({
-        slug: slugOrId,
-        pet: mapPetRow(petRow, galleryRows),
-      });
     }
 
     void fetchPublicPet();
@@ -225,54 +118,6 @@ export default function PublicPetPage() {
       isMounted = false;
     };
   }, [isReady, localPet, remotePetResult?.slug, slug]);
-
-  useEffect(() => {
-    if (!pet?.ownerId || localOwnerName || !supabase) {
-      return;
-    }
-
-    if (remoteOwnerResult?.ownerId === pet.ownerId) {
-      return;
-    }
-
-    const supabaseClient = supabase;
-    const ownerId = pet.ownerId;
-    let isMounted = true;
-
-    async function fetchOwnerName() {
-      const { data, error } = await supabaseClient
-        .from("owners")
-        .select("id, full_name, plan_tier, plan_status")
-        .eq("id", ownerId)
-        .limit(1);
-
-      if (!isMounted) {
-        return;
-      }
-
-      if (error) {
-        return;
-      }
-
-      const row = (data?.[0] ?? null) as OwnerRow | null;
-
-      if (!row) {
-        return;
-      }
-
-      setRemoteOwnerResult({
-        ownerId: row.id,
-        name: row.full_name || "Tutor",
-        isPremiumPlan: row.plan_tier === "pro" && row.plan_status !== "inactive",
-      });
-    }
-
-    void fetchOwnerName();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [localOwnerName, pet?.ownerId, remoteOwnerResult?.ownerId]);
 
   useEffect(() => {
     if (manualLocation) {

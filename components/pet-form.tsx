@@ -4,6 +4,12 @@ import dynamic from "next/dynamic";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { reverseGeocodeLabel } from "@/lib/geocode-client";
+import {
+  BRAZIL_CITY_FALLBACK_BY_STATE,
+  BRAZIL_STATE_OPTIONS,
+  COUNTRY_DIAL_OPTIONS,
+  PET_BREED_OPTIONS,
+} from "@/lib/pet-form-options";
 import type { PetFormSubmission, PetFormValues, PetMedia } from "@/lib/types";
 import { formatCoordinates } from "@/lib/utils";
 
@@ -100,6 +106,128 @@ function TextareaField({
   );
 }
 
+const OTHER_CITY_OPTION = "__other_city__";
+const OTHER_BREED_OPTION = "__other_breed__";
+
+interface ParsedCityValue {
+  stateCode: string;
+  selectedCity: string;
+  customCity: string;
+}
+
+function digitsOnly(value: string) {
+  return value.replace(/\D+/g, "");
+}
+
+function sanitizePhoneInput(value: string) {
+  return digitsOnly(value).slice(0, 15);
+}
+
+function parsePhoneParts(value: string) {
+  const fallbackCountryCode = "BR";
+  const digits = digitsOnly(value);
+  if (!digits) {
+    return {
+      countryCode: fallbackCountryCode,
+      localNumber: "",
+    };
+  }
+
+  const optionsByLongestDialCode = [...COUNTRY_DIAL_OPTIONS].sort(
+    (first, second) => second.dialCode.length - first.dialCode.length,
+  );
+
+  for (const option of optionsByLongestDialCode) {
+    if (!digits.startsWith(option.dialCode)) {
+      continue;
+    }
+
+    const localNumber = digits.slice(option.dialCode.length);
+    if (!localNumber) {
+      continue;
+    }
+
+    return {
+      countryCode: option.code,
+      localNumber,
+    };
+  }
+
+  return {
+    countryCode: fallbackCountryCode,
+    localNumber: digits,
+  };
+}
+
+function formatPhoneWithCountry(countryCode: string, localNumber: string) {
+  const option =
+    COUNTRY_DIAL_OPTIONS.find((country) => country.code === countryCode) ??
+    COUNTRY_DIAL_OPTIONS[0];
+  const normalizedLocalNumber = sanitizePhoneInput(localNumber);
+
+  if (!normalizedLocalNumber) {
+    return "";
+  }
+
+  return `+${option.dialCode} ${normalizedLocalNumber}`;
+}
+
+function parseCityValue(rawCity: string): ParsedCityValue {
+  const value = rawCity.trim();
+  if (!value) {
+    return {
+      stateCode: "",
+      selectedCity: "",
+      customCity: "",
+    };
+  }
+
+  const ufMatch = value.match(/(?:-|\/|,)\s*([A-Za-z]{2})$/);
+  const stateCode = ufMatch?.[1]?.toUpperCase() ?? "";
+
+  if (!stateCode) {
+    return {
+      stateCode: "",
+      selectedCity: OTHER_CITY_OPTION,
+      customCity: value,
+    };
+  }
+
+  const baseCityName = value
+    .slice(0, ufMatch?.index ?? value.length)
+    .trim()
+    .replace(/[,\-\/]+$/, "")
+    .trim();
+  return {
+    stateCode,
+    selectedCity: baseCityName || "",
+    customCity: "",
+  };
+}
+
+function formatCityValue(stateCode: string, cityName: string) {
+  const normalizedStateCode = stateCode.trim().toUpperCase();
+  const normalizedCity = cityName.trim();
+
+  if (!normalizedCity) {
+    return "";
+  }
+
+  if (!normalizedStateCode) {
+    return normalizedCity;
+  }
+
+  return `${normalizedCity} - ${normalizedStateCode}`;
+}
+
+function isBreedInCatalog(value: string) {
+  return PET_BREED_OPTIONS.includes(value);
+}
+
+function getFlagIconUrl(countryCode: string) {
+  return `https://flagcdn.com/20x15/${countryCode.toLowerCase()}.png`;
+}
+
 export function PetForm({
   title,
   subtitle,
@@ -110,7 +238,29 @@ export function PetForm({
   initialGallery = [],
   onSubmit,
 }: PetFormProps) {
-  const [values, setValues] = useState<PetFormValues>(initialValues ?? emptyPetFormValues);
+  const initialFormValues = initialValues ?? emptyPetFormValues;
+  const initialWhatsappPhoneParts = parsePhoneParts(initialFormValues.whatsapp);
+  const initialCityValue = parseCityValue(initialFormValues.city);
+  const initialBreedValue = initialFormValues.breed.trim();
+
+  const [values, setValues] = useState<PetFormValues>(initialFormValues);
+  const [whatsappCountryCode, setWhatsappCountryCode] = useState(initialWhatsappPhoneParts.countryCode);
+  const [whatsappLocalNumber, setWhatsappLocalNumber] = useState(initialWhatsappPhoneParts.localNumber);
+  const [isCountryMenuOpen, setIsCountryMenuOpen] = useState(false);
+  const [selectedStateCode, setSelectedStateCode] = useState(initialCityValue.stateCode);
+  const [selectedCity, setSelectedCity] = useState(initialCityValue.selectedCity);
+  const [customCity, setCustomCity] = useState(initialCityValue.customCity);
+  const [cityOptions, setCityOptions] = useState<string[]>(
+    selectedStateCode ? (BRAZIL_CITY_FALLBACK_BY_STATE[selectedStateCode] ?? []) : [],
+  );
+  const [isLoadingCities, setIsLoadingCities] = useState(false);
+  const [cityFetchFeedback, setCityFetchFeedback] = useState("");
+  const [selectedBreed, setSelectedBreed] = useState(
+    initialBreedValue && isBreedInCatalog(initialBreedValue) ? initialBreedValue : OTHER_BREED_OPTION,
+  );
+  const [customBreed, setCustomBreed] = useState(
+    initialBreedValue && isBreedInCatalog(initialBreedValue) ? "" : initialBreedValue,
+  );
   const [existingAvatarUrl] = useState(initialAvatarUrl);
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [existingGallery, setExistingGallery] = useState<PetMedia[]>(initialGallery);
@@ -122,9 +272,19 @@ export function PetForm({
   const [isRequestingLocation, setIsRequestingLocation] = useState(false);
   const [locationFeedback, setLocationFeedback] = useState("");
   const geocodeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const avatarInputRef = useRef<HTMLInputElement | null>(null);
+  const photoInputRef = useRef<HTMLInputElement | null>(null);
+  const videoInputRef = useRef<HTMLInputElement | null>(null);
+  const selectedCityRef = useRef(selectedCity);
+  const countryMenuRef = useRef<HTMLDivElement | null>(null);
 
   const isPremium = isPremiumPlan;
   const isLostMode = useMemo(() => values.status === "lost", [values.status]);
+  const selectedCountryOption = useMemo(
+    () => COUNTRY_DIAL_OPTIONS.find((country) => country.code === whatsappCountryCode) ?? COUNTRY_DIAL_OPTIONS[0],
+    [whatsappCountryCode],
+  );
+  selectedCityRef.current = selectedCity;
 
   const avatarPreview = useMemo(() => {
     if (avatarFile) {
@@ -146,11 +306,194 @@ export function PetForm({
     };
   }, [avatarPreview]);
 
+  useEffect(() => {
+    if (!isCountryMenuOpen) {
+      return;
+    }
+
+    function handlePointerDown(event: MouseEvent | TouchEvent) {
+      if (!countryMenuRef.current) {
+        return;
+      }
+
+      const target = event.target;
+      if (!(target instanceof Node)) {
+        return;
+      }
+
+      if (countryMenuRef.current.contains(target)) {
+        return;
+      }
+
+      setIsCountryMenuOpen(false);
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("touchstart", handlePointerDown);
+
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("touchstart", handlePointerDown);
+    };
+  }, [isCountryMenuOpen]);
+
+  useEffect(() => {
+    if (!selectedStateCode) {
+      return;
+    }
+
+    let isMounted = true;
+    const currentSelectedCity = selectedCityRef.current;
+
+    void (async () => {
+      setIsLoadingCities(true);
+      setCityFetchFeedback("");
+
+      try {
+        const response = await fetch(`/api/localidades/cidades?uf=${encodeURIComponent(selectedStateCode)}`);
+        const payload = (await response.json()) as {
+          ok?: boolean;
+          cities?: string[];
+          message?: string;
+        };
+
+        if (!isMounted) {
+          return;
+        }
+
+        if (!response.ok || !payload.ok || !payload.cities) {
+          const fallbackCities = BRAZIL_CITY_FALLBACK_BY_STATE[selectedStateCode] ?? [];
+          setCityOptions(fallbackCities);
+          setCityFetchFeedback(
+            payload.message
+              ? `${payload.message} Exibindo lista reduzida temporaria.`
+              : "Nao foi possivel carregar todas as cidades agora. Exibindo lista reduzida temporaria.",
+          );
+          return;
+        }
+
+        setCityOptions(payload.cities);
+
+        if (
+          currentSelectedCity &&
+          currentSelectedCity !== OTHER_CITY_OPTION &&
+          !payload.cities.includes(currentSelectedCity)
+        ) {
+          setSelectedCity(OTHER_CITY_OPTION);
+          setCustomCity(currentSelectedCity);
+          updateField("city", formatCityValue(selectedStateCode, currentSelectedCity));
+        }
+      } catch {
+        if (!isMounted) {
+          return;
+        }
+
+        const fallbackCities = BRAZIL_CITY_FALLBACK_BY_STATE[selectedStateCode] ?? [];
+        setCityOptions(fallbackCities);
+        setCityFetchFeedback("Sem conexao para carregar todas as cidades. Exibindo lista reduzida temporaria.");
+      } finally {
+        if (isMounted) {
+          setIsLoadingCities(false);
+        }
+      }
+    })();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedStateCode]);
+
   function updateField<K extends keyof PetFormValues>(key: K, value: PetFormValues[K]) {
     setValues((prev) => ({
       ...prev,
       [key]: value,
     }));
+  }
+
+  function applyWhatsappValue(countryCode: string, localNumber: string) {
+    const formatted = formatPhoneWithCountry(countryCode, localNumber);
+    updateField("whatsapp", formatted);
+  }
+
+  function handleWhatsappCountryChange(nextCountryCode: string) {
+    setWhatsappCountryCode(nextCountryCode);
+    applyWhatsappValue(nextCountryCode, whatsappLocalNumber);
+    setIsCountryMenuOpen(false);
+  }
+
+  function handleWhatsappNumberChange(nextNumber: string) {
+    const normalizedNumber = sanitizePhoneInput(nextNumber);
+    setWhatsappLocalNumber(normalizedNumber);
+    applyWhatsappValue(whatsappCountryCode, normalizedNumber);
+  }
+
+  function handleStateChange(nextStateCode: string) {
+    setSelectedStateCode(nextStateCode);
+    setSelectedCity("");
+    setCustomCity("");
+    updateField("city", "");
+  }
+
+  function handleCityChange(nextCity: string) {
+    setSelectedCity(nextCity);
+
+    if (nextCity === OTHER_CITY_OPTION) {
+      updateField("city", formatCityValue(selectedStateCode, customCity));
+      return;
+    }
+
+    setCustomCity("");
+    updateField("city", formatCityValue(selectedStateCode, nextCity));
+  }
+
+  function handleCustomCityChange(nextCity: string) {
+    setCustomCity(nextCity);
+    updateField("city", formatCityValue(selectedStateCode, nextCity));
+  }
+
+  function handleBreedChange(nextBreed: string) {
+    setSelectedBreed(nextBreed);
+
+    if (nextBreed === OTHER_BREED_OPTION) {
+      updateField("breed", customBreed);
+      return;
+    }
+
+    setCustomBreed("");
+    updateField("breed", nextBreed);
+  }
+
+  function handleCustomBreedChange(nextBreed: string) {
+    setCustomBreed(nextBreed);
+    updateField("breed", nextBreed);
+  }
+
+  function getSingleFileLabel(file: File | null, fallbackLabel = "Nenhum arquivo selecionado") {
+    if (!file) {
+      return fallbackLabel;
+    }
+
+    return file.name;
+  }
+
+  function getMultiFileLabel(files: File[]) {
+    if (files.length === 0) {
+      return "Nenhum arquivo selecionado";
+    }
+
+    if (files.length === 1) {
+      return files[0].name;
+    }
+
+    return `${files.length} arquivos selecionados`;
+  }
+
+  function openFileDialog(inputRef: React.RefObject<HTMLInputElement | null>) {
+    if (!inputRef.current) {
+      return;
+    }
+
+    inputRef.current.click();
   }
 
   async function applyResolvedLocationLabel(lat: number, lng: number) {
@@ -285,6 +628,11 @@ export function PetForm({
       return;
     }
 
+    if (isPremium && !selectedStateCode) {
+      setFeedback("Selecione o estado do pet.");
+      return;
+    }
+
     if (!avatarFile && !existingAvatarUrl) {
       setFeedback("Envie uma foto principal do pet.");
       return;
@@ -315,6 +663,15 @@ export function PetForm({
       setVideoFiles([]);
       if (avatarFile) {
         setAvatarFile(null);
+      }
+      if (photoInputRef.current) {
+        photoInputRef.current.value = "";
+      }
+      if (videoInputRef.current) {
+        videoInputRef.current.value = "";
+      }
+      if (avatarInputRef.current) {
+        avatarInputRef.current.value = "";
       }
       return;
     }
@@ -348,12 +705,35 @@ export function PetForm({
           ) : null}
 
           {isPremium ? (
-            <InputField
-              label="Raca"
-              value={values.breed}
-              onChange={(value) => updateField("breed", value)}
-              placeholder="Ex: Golden Retriever"
-            />
+            <label className="grid gap-2 text-sm text-zinc-300">
+              <span className="text-xs uppercase tracking-[0.14em] text-zinc-400">Raca</span>
+              <select
+                value={selectedBreed}
+                onChange={(event) => handleBreedChange(event.target.value)}
+                className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-300/60 focus:bg-white/10"
+              >
+                <option value="" className="bg-zinc-900 text-white">
+                  Selecione a raca
+                </option>
+                {PET_BREED_OPTIONS.map((breedOption) => (
+                  <option key={breedOption} value={breedOption} className="bg-zinc-900 text-white">
+                    {breedOption}
+                  </option>
+                ))}
+                <option value={OTHER_BREED_OPTION} className="bg-zinc-900 text-white">
+                  Outra (digitar)
+                </option>
+              </select>
+              {selectedBreed === OTHER_BREED_OPTION ? (
+                <input
+                  type="text"
+                  value={customBreed}
+                  onChange={(event) => handleCustomBreedChange(event.target.value)}
+                  placeholder="Digite a raca"
+                  className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition placeholder:text-zinc-500 focus:border-cyan-300/60 focus:bg-white/10"
+                />
+              ) : null}
+            </label>
           ) : null}
 
           {isPremium ? (
@@ -366,27 +746,92 @@ export function PetForm({
           ) : null}
 
           {isPremium ? (
-            <InputField
-              label="Cidade"
-              value={values.city}
-              onChange={(value) => updateField("city", value)}
-              placeholder="Ex: Sao Paulo - SP"
-            />
+            <label className="grid gap-2 text-sm text-zinc-300">
+              <span className="text-xs uppercase tracking-[0.14em] text-zinc-400">Estado</span>
+              <select
+                value={selectedStateCode}
+                onChange={(event) => handleStateChange(event.target.value)}
+                className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-300/60 focus:bg-white/10"
+              >
+                <option value="" className="bg-zinc-900 text-white">
+                  Selecione o estado
+                </option>
+                {BRAZIL_STATE_OPTIONS.map((stateOption) => (
+                  <option key={stateOption.code} value={stateOption.code} className="bg-zinc-900 text-white">
+                    {stateOption.name} ({stateOption.code})
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+
+          {isPremium ? (
+            <label className="grid gap-2 text-sm text-zinc-300">
+              <span className="text-xs uppercase tracking-[0.14em] text-zinc-400">Cidade</span>
+              <select
+                value={selectedCity}
+                disabled={!selectedStateCode || isLoadingCities}
+                onChange={(event) => handleCityChange(event.target.value)}
+                className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition disabled:cursor-not-allowed disabled:opacity-60 focus:border-cyan-300/60 focus:bg-white/10"
+              >
+                <option value="" className="bg-zinc-900 text-white">
+                  {!selectedStateCode
+                    ? "Selecione o estado primeiro"
+                    : isLoadingCities
+                      ? "Carregando cidades..."
+                      : "Selecione a cidade"}
+                </option>
+                {cityOptions.map((cityOption) => (
+                  <option key={cityOption} value={cityOption} className="bg-zinc-900 text-white">
+                    {cityOption}
+                  </option>
+                ))}
+                {selectedStateCode ? (
+                  <option value={OTHER_CITY_OPTION} className="bg-zinc-900 text-white">
+                    Outra cidade (digitar)
+                  </option>
+                ) : null}
+              </select>
+              {selectedCity === OTHER_CITY_OPTION ? (
+                <input
+                  type="text"
+                  value={customCity}
+                  onChange={(event) => handleCustomCityChange(event.target.value)}
+                  placeholder="Digite a cidade"
+                  className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition placeholder:text-zinc-500 focus:border-cyan-300/60 focus:bg-white/10"
+                />
+              ) : null}
+              {cityFetchFeedback ? <p className="text-xs text-amber-200">{cityFetchFeedback}</p> : null}
+            </label>
           ) : null}
 
           <label className="grid gap-2 text-sm text-zinc-300">
             <span className="text-xs uppercase tracking-[0.14em] text-zinc-400">Foto principal</span>
             <input
+              ref={avatarInputRef}
               type="file"
               accept="image/*"
+              className="hidden"
               onChange={(event) => {
                 const file = event.target.files?.[0] ?? null;
-                if (file) {
-                  setAvatarFile(file);
-                }
+                setAvatarFile(file);
               }}
-              className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-zinc-300 file:mr-4 file:rounded-full file:border-0 file:bg-cyan-300 file:px-4 file:py-2 file:text-xs file:font-semibold file:uppercase file:tracking-[0.12em] file:text-zinc-950"
             />
+            <div className="flex min-w-0 items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-3 py-2">
+              <button
+                type="button"
+                onClick={() => openFileDialog(avatarInputRef)}
+                className="shrink-0 rounded-full bg-cyan-300 px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-zinc-950 transition hover:bg-cyan-200"
+              >
+                Escolher
+              </button>
+              <p className="min-w-0 truncate text-sm text-zinc-300">
+                {getSingleFileLabel(
+                  avatarFile,
+                  existingAvatarUrl ? "Foto atual mantida" : "Nenhum arquivo selecionado",
+                )}
+              </p>
+            </div>
           </label>
         </div>
 
@@ -411,12 +856,74 @@ export function PetForm({
         )}
 
         <div className="grid gap-5 sm:grid-cols-2">
-          <InputField
-            label={isPremium ? "WhatsApp" : "Contato principal"}
-            value={values.whatsapp}
-            onChange={(value) => updateField("whatsapp", value)}
-            placeholder="+55 11 99999-9999"
-          />
+          <label className="grid gap-2 text-sm text-zinc-300">
+            <span className="text-xs uppercase tracking-[0.14em] text-zinc-400">
+              {isPremium ? "WhatsApp" : "Contato principal"}
+            </span>
+            <div className="grid gap-2 sm:grid-cols-[minmax(160px,210px)_1fr]">
+              <div className="relative z-[1200]" ref={countryMenuRef}>
+                <button
+                  type="button"
+                  onClick={() => setIsCountryMenuOpen((prev) => !prev)}
+                  className="flex w-full items-center justify-between gap-2 rounded-2xl border border-white/10 bg-white/5 px-3 py-3 text-sm text-white outline-none transition hover:bg-white/10 focus:border-cyan-300/60"
+                >
+                  <span className="flex min-w-0 items-center gap-2">
+                    <img
+                      src={getFlagIconUrl(selectedCountryOption.code)}
+                      alt={`Bandeira ${selectedCountryOption.name}`}
+                      width={20}
+                      height={15}
+                      loading="lazy"
+                      className="h-[15px] w-5 rounded-sm border border-white/20 object-cover"
+                    />
+                    <span className="truncate">{selectedCountryOption.name}</span>
+                  </span>
+                  <span className="text-xs text-zinc-300">
+                    +{selectedCountryOption.dialCode} {isCountryMenuOpen ? "▲" : "▼"}
+                  </span>
+                </button>
+
+                {isCountryMenuOpen ? (
+                  <div className="absolute z-[1300] mt-2 max-h-64 w-full overflow-y-auto rounded-2xl border border-white/15 bg-zinc-900/95 p-1 shadow-xl shadow-black/50">
+                    {COUNTRY_DIAL_OPTIONS.map((countryOption) => (
+                      <button
+                        key={`${countryOption.code}-${countryOption.dialCode}`}
+                        type="button"
+                        onClick={() => handleWhatsappCountryChange(countryOption.code)}
+                        className={[
+                          "flex w-full items-center justify-between gap-2 rounded-xl px-2 py-2 text-left text-sm transition",
+                          whatsappCountryCode === countryOption.code
+                            ? "bg-cyan-400/20 text-cyan-100"
+                            : "text-zinc-200 hover:bg-white/10",
+                        ].join(" ")}
+                      >
+                        <span className="flex min-w-0 items-center gap-2">
+                          <img
+                            src={getFlagIconUrl(countryOption.code)}
+                            alt={`Bandeira ${countryOption.name}`}
+                            width={20}
+                            height={15}
+                            loading="lazy"
+                            className="h-[15px] w-5 rounded-sm border border-white/20 object-cover"
+                          />
+                          <span className="truncate">{countryOption.name}</span>
+                        </span>
+                        <span className="text-xs text-zinc-300">+{countryOption.dialCode}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={whatsappLocalNumber}
+                onChange={(event) => handleWhatsappNumberChange(event.target.value)}
+                placeholder="DDD + numero"
+                className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition placeholder:text-zinc-500 focus:border-cyan-300/60 focus:bg-white/10"
+              />
+            </div>
+          </label>
           {isPremium ? (
             <InputField
               label="Telefone para ligacao"
@@ -435,7 +942,7 @@ export function PetForm({
                 className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-300/60 focus:bg-white/10"
               >
                 <option value="safe" className="bg-zinc-900 text-white">
-                  Seguro
+                  Em casa
                 </option>
                 <option value="lost" className="bg-zinc-900 text-white">
                   Perdido
@@ -547,29 +1054,45 @@ export function PetForm({
               <label className="grid gap-2 text-sm text-zinc-300">
                 <span className="text-xs uppercase tracking-[0.14em] text-zinc-400">Fotos da galeria</span>
                 <input
+                  ref={photoInputRef}
                   type="file"
                   accept="image/*"
                   multiple
+                  className="hidden"
                   onChange={(event) => setPhotoFiles(Array.from(event.target.files ?? []))}
-                  className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-zinc-300 file:mr-4 file:rounded-full file:border-0 file:bg-zinc-200 file:px-4 file:py-2 file:text-xs file:font-semibold file:uppercase file:tracking-[0.12em] file:text-zinc-950"
                 />
-                {photoFiles.length > 0 ? (
-                  <p className="text-xs text-zinc-400">{photoFiles.length} foto(s) selecionada(s)</p>
-                ) : null}
+                <div className="flex min-w-0 items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-3 py-2">
+                  <button
+                    type="button"
+                    onClick={() => openFileDialog(photoInputRef)}
+                    className="shrink-0 rounded-full bg-zinc-200 px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-zinc-950 transition hover:bg-zinc-100"
+                  >
+                    Escolher
+                  </button>
+                  <p className="min-w-0 truncate text-sm text-zinc-300">{getMultiFileLabel(photoFiles)}</p>
+                </div>
               </label>
 
               <label className="grid gap-2 text-sm text-zinc-300">
                 <span className="text-xs uppercase tracking-[0.14em] text-zinc-400">Videos da galeria</span>
                 <input
+                  ref={videoInputRef}
                   type="file"
                   accept="video/*"
                   multiple
+                  className="hidden"
                   onChange={(event) => setVideoFiles(Array.from(event.target.files ?? []))}
-                  className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-zinc-300 file:mr-4 file:rounded-full file:border-0 file:bg-zinc-200 file:px-4 file:py-2 file:text-xs file:font-semibold file:uppercase file:tracking-[0.12em] file:text-zinc-950"
                 />
-                {videoFiles.length > 0 ? (
-                  <p className="text-xs text-zinc-400">{videoFiles.length} video(s) selecionado(s)</p>
-                ) : null}
+                <div className="flex min-w-0 items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-3 py-2">
+                  <button
+                    type="button"
+                    onClick={() => openFileDialog(videoInputRef)}
+                    className="shrink-0 rounded-full bg-zinc-200 px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-zinc-950 transition hover:bg-zinc-100"
+                  >
+                    Escolher
+                  </button>
+                  <p className="min-w-0 truncate text-sm text-zinc-300">{getMultiFileLabel(videoFiles)}</p>
+                </div>
               </label>
             </div>
 

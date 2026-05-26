@@ -9,6 +9,10 @@ function parseTab(value: string | null): "login" | "register" {
   return value === "register" ? "register" : "login";
 }
 
+function isSafeInternalPath(value: string) {
+  return value.startsWith("/") && !value.startsWith("//") && !value.includes("\\");
+}
+
 interface AdminLoginResult {
   ok: boolean;
   message?: string;
@@ -44,7 +48,7 @@ export default function LoginPage() {
 
     const params = new URLSearchParams(window.location.search);
     const requestedNextPath = params.get("next");
-    return requestedNextPath && requestedNextPath.startsWith("/") ? requestedNextPath : null;
+    return requestedNextPath && isSafeInternalPath(requestedNextPath) ? requestedNextPath : null;
   }
 
   function getOwnerNextPath() {

@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
 
+import { consumeRateLimit } from "@/lib/rate-limit";
+import { requireAuthenticatedUser } from "@/lib/request-auth";
+import { getRequestIp } from "@/lib/request-security";
 import { createSupabaseServerClient, hasSupabaseServerClient } from "@/lib/supabase-server";
 import { createId } from "@/lib/utils";
 
 interface PushSubscriptionBody {
-  ownerId?: string;
   userAgent?: string;
   subscription?: {
     endpoint?: string;
@@ -17,6 +19,11 @@ interface PushSubscriptionBody {
 }
 
 export async function POST(request: Request) {
+  const auth = await requireAuthenticatedUser(request);
+  if (!auth.ok) {
+    return auth.response;
+  }
+
   if (!hasSupabaseServerClient()) {
     return NextResponse.json(
       {
@@ -40,16 +47,37 @@ export async function POST(request: Request) {
     );
   }
 
-  const ownerId = (body.ownerId ?? "").trim();
-  const endpoint = (body.subscription?.endpoint ?? "").trim();
-  const p256dh = (body.subscription?.keys?.p256dh ?? "").trim();
-  const auth = (body.subscription?.keys?.auth ?? "").trim();
+  const ownerId = auth.user.id;
+  const rateLimit = consumeRateLimit({
+    key: `push-subscribe:${ownerId}:${getRequestIp(request)}`,
+    maxRequests: 40,
+    windowMs: 60 * 60 * 1000,
+  });
 
-  if (!ownerId || !endpoint || !p256dh || !auth) {
+  if (!rateLimit.ok) {
     return NextResponse.json(
       {
         ok: false,
-        message: "ownerId e dados da subscription sao obrigatorios.",
+        message: "Muitas tentativas de ativar notificacao push. Aguarde e tente novamente.",
+      },
+      {
+        status: 429,
+        headers: {
+          "Retry-After": String(rateLimit.retryAfterSeconds),
+        },
+      },
+    );
+  }
+
+  const endpoint = (body.subscription?.endpoint ?? "").trim();
+  const p256dh = (body.subscription?.keys?.p256dh ?? "").trim();
+  const authKey = (body.subscription?.keys?.auth ?? "").trim();
+
+  if (!endpoint || !p256dh || !authKey) {
+    return NextResponse.json(
+      {
+        ok: false,
+        message: "Dados da subscription sao obrigatorios.",
       },
       { status: 400 },
     );
@@ -83,7 +111,7 @@ export async function POST(request: Request) {
       .update({
         owner_id: ownerId,
         p256dh,
-        auth,
+        auth: authKey,
         user_agent: (body.userAgent ?? "").trim(),
         active: true,
         updated_at: nowIso,
@@ -97,7 +125,7 @@ export async function POST(request: Request) {
       owner_id: ownerId,
       endpoint,
       p256dh,
-      auth,
+      auth: authKey,
       user_agent: (body.userAgent ?? "").trim(),
       active: true,
       created_at: nowIso,

@@ -40,7 +40,7 @@ export function LocationPickerMap({ lat, lng, onPick }: LocationPickerMapProps) 
   const center = lat !== null && lng !== null ? ([lat, lng] as [number, number]) : DEFAULT_CENTER;
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-white/10">
+    <div className="relative z-0 overflow-hidden rounded-2xl border border-white/10">
       <MapContainer
         center={center}
         zoom={13}

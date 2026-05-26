@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 
+import { authFetch } from "@/lib/auth-client";
 import { loadState, persistState } from "@/lib/storage";
 import type {
   AccessNotification,
@@ -51,6 +52,20 @@ interface LostPetAlertResponse {
     pushSent?: number;
     pushFailed?: number;
     pushSkippedNoSubscription?: number;
+  };
+}
+
+interface ActivateTagResponse {
+  ok: boolean;
+  message?: string;
+  tag?: {
+    id: string;
+    code: string;
+    ownerId: string | null;
+    petId: string | null;
+    status: NfcTagStatus;
+    createdAt: string;
+    updatedAt: string;
   };
 }
 
@@ -99,10 +114,6 @@ function ensureUniqueSlug(desired: string, pets: Pet[], currentPetId?: string) {
   }
 
   return candidate;
-}
-
-function generateActivationCode() {
-  return `ACT-${Math.floor(1000 + Math.random() * 9000)}`;
 }
 
 function normalizeActivationCode(value: string | undefined) {
@@ -352,26 +363,9 @@ function getErrorMessage(error: unknown) {
   return "";
 }
 
-function isDuplicateCodeError(error: unknown) {
-  const message = getErrorMessage(error).toLowerCase();
-  return message.includes("duplicate key value") && message.includes("nfc_tags_code_key");
-}
-
 function isDuplicateSlugError(error: unknown) {
   const message = getErrorMessage(error).toLowerCase();
   return message.includes("duplicate key value") && message.includes("pets_slug_key");
-}
-
-function generateNextTagCode(usedCodes: Set<string>) {
-  let counter = 1;
-  let candidate = `PTBR-NFC-${String(counter).padStart(3, "0")}`;
-
-  while (usedCodes.has(candidate)) {
-    counter += 1;
-    candidate = `PTBR-NFC-${String(counter).padStart(3, "0")}`;
-  }
-
-  return candidate;
 }
 
 async function fetchPetsByOwnerFromSupabase(ownerId: string) {
@@ -529,32 +523,6 @@ async function fetchOwnerById(ownerId: string) {
   return mapOwnerRow(data[0] as OwnerRow);
 }
 
-async function syncNfcTagWithSupabase(tag: NfcTag) {
-  if (!supabase) {
-    return;
-  }
-
-  const { error } = await supabase.from("nfc_tags").upsert(
-    {
-      id: tag.id,
-      code: tag.code,
-      activation_code: tag.activationCode,
-      owner_id: tag.ownerId,
-      pet_id: tag.petId,
-      status: tag.status,
-      created_at: tag.createdAt,
-      updated_at: tag.updatedAt,
-    },
-    {
-      onConflict: "id",
-    },
-  );
-
-  if (error) {
-    throw new Error(error.message);
-  }
-}
-
 async function syncPetWithSupabase(pet: Pet) {
   if (!supabase) {
     return;
@@ -644,10 +612,117 @@ function usePetTapValue() {
     const supabaseClient = supabase;
     let isMounted = true;
 
+    async function hydrateOwnerFromSession(sessionOwnerId: string, sessionEmail: string | null, createdAt: string) {
+      const normalizedEmail = (sessionEmail ?? "").trim().toLowerCase();
+      const remoteOwner = await fetchOwnerById(sessionOwnerId);
+
+      const fallbackName = normalizedEmail.split("@")[0] || "Tutor";
+      const owner: Owner = {
+        id: sessionOwnerId,
+        fullName: remoteOwner?.fullName ?? fallbackName,
+        email: normalizedEmail,
+        password: remoteOwner?.password ?? "__SUPABASE_AUTH__",
+        subscription: createDefaultOwnerSubscription(remoteOwner?.subscription),
+        alerts: createDefaultOwnerAlerts(remoteOwner?.alerts),
+        createdAt: remoteOwner?.createdAt ?? createdAt,
+      };
+
+      try {
+        await syncOwnerWithSupabase(owner);
+      } catch {
+        // If sync fails we still keep the authenticated session in memory.
+      }
+
+      if (!isMounted) {
+        return;
+      }
+
+      setState((prev) => ({
+        ...prev,
+        owners: prev.owners.some((candidate) => candidate.id === owner.id)
+          ? prev.owners.map((candidate) =>
+              candidate.id === owner.id
+                ? {
+                    ...candidate,
+                    ...owner,
+                    fullName: owner.fullName || candidate.fullName,
+                    email: owner.email || candidate.email,
+                    subscription: createDefaultOwnerSubscription(
+                      owner.subscription ?? candidate.subscription,
+                    ),
+                    alerts: createDefaultOwnerAlerts(owner.alerts ?? candidate.alerts),
+                    createdAt: owner.createdAt || candidate.createdAt,
+                  }
+                : candidate,
+            )
+          : [...prev.owners, owner],
+        sessionOwnerId: owner.id,
+      }));
+    }
+
+    async function restoreAuthSession() {
+      const { data, error } = await supabaseClient.auth.getSession();
+      if (error || !data.session?.user || !isMounted) {
+        return;
+      }
+
+      const authUser = data.session.user;
+      await hydrateOwnerFromSession(authUser.id, authUser.email ?? null, authUser.created_at);
+    }
+
+    const {
+      data: { subscription },
+    } = supabaseClient.auth.onAuthStateChange((event, session) => {
+      if (!isMounted) {
+        return;
+      }
+
+      if (event === "SIGNED_OUT") {
+        setState((prev) => ({
+          ...prev,
+          pets: [],
+          nfcTags: [],
+          scanEvents: [],
+          notifications: [],
+          sessionOwnerId: null,
+        }));
+        return;
+      }
+
+      if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
+        const authUser = session?.user;
+        if (!authUser) {
+          return;
+        }
+
+        void hydrateOwnerFromSession(authUser.id, authUser.email ?? null, authUser.created_at);
+      }
+    });
+
+    if (!state.sessionOwnerId) {
+      void restoreAuthSession();
+    }
+
+    return () => {
+      isMounted = false;
+      subscription.unsubscribe();
+    };
+  }, [isReady, state.sessionOwnerId]);
+
+  useEffect(() => {
+    if (!isReady || !supabase || !state.sessionOwnerId) {
+      return;
+    }
+
+    const supabaseClient = supabase;
+    const ownerId = state.sessionOwnerId;
+    let isMounted = true;
+
     async function hydrateTagsFromSupabase() {
       const { data, error } = await supabaseClient
         .from("nfc_tags")
-        .select("id, code, activation_code, owner_id, pet_id, status, created_at, updated_at");
+        .select("id, code, activation_code, owner_id, pet_id, status, created_at, updated_at")
+        .eq("owner_id", ownerId);
 
       if (!isMounted || error || !data) {
         return;
@@ -656,15 +731,9 @@ function usePetTapValue() {
       const remoteTags = data.map((row) => mapNfcTagRow(row as NfcTagRow));
 
       setState((prev) => {
-        const mergedById = new Map(prev.nfcTags.map((tag) => [tag.id, tag]));
-
-        for (const tag of remoteTags) {
-          mergedById.set(tag.id, tag);
-        }
-
         return {
           ...prev,
-          nfcTags: Array.from(mergedById.values()),
+          nfcTags: remoteTags,
         };
       });
     }
@@ -674,7 +743,7 @@ function usePetTapValue() {
     return () => {
       isMounted = false;
     };
-  }, [isReady]);
+  }, [isReady, state.sessionOwnerId]);
 
   useEffect(() => {
     if (!isReady || !supabase || !state.sessionOwnerId) {
@@ -891,7 +960,6 @@ function usePetTapValue() {
           };
         }
 
-        const localOwner = state.owners.find((owner) => owner.id === authUser.id);
         const remoteOwner = await fetchOwnerById(authUser.id);
         const fallbackName = normalized.split("@")[0] || "Tutor";
         const fullNameFromMetadata =
@@ -903,18 +971,14 @@ function usePetTapValue() {
           id: authUser.id,
           fullName:
             remoteOwner?.fullName ??
-            localOwner?.fullName ??
             fullNameFromMetadata ??
             fallbackName,
           email: normalized,
-          password: localOwner?.password ?? remoteOwner?.password ?? "__SUPABASE_AUTH__",
-          subscription: createDefaultOwnerSubscription(
-            remoteOwner?.subscription ?? localOwner?.subscription,
-          ),
-          alerts: createDefaultOwnerAlerts(remoteOwner?.alerts ?? localOwner?.alerts),
+          password: remoteOwner?.password ?? "__SUPABASE_AUTH__",
+          subscription: createDefaultOwnerSubscription(remoteOwner?.subscription),
+          alerts: createDefaultOwnerAlerts(remoteOwner?.alerts),
           createdAt:
             remoteOwner?.createdAt ??
-            localOwner?.createdAt ??
             authUser.created_at ??
             new Date().toISOString(),
         };
@@ -942,25 +1006,12 @@ function usePetTapValue() {
         return { ok: true };
       }
 
-      const found = state.owners.find(
-        (owner) => owner.email.toLowerCase() === normalized && owner.password === password,
-      );
-
-      if (!found) {
-        return {
-          ok: false,
-          message: "Credenciais invalidas.",
-        };
-      }
-
-      setState((prev) => ({
-        ...prev,
-        sessionOwnerId: found.id,
-      }));
-
-      return { ok: true };
+      return {
+        ok: false,
+        message: "Autenticacao indisponivel. Configure o Supabase para realizar login.",
+      };
     },
-    [state.owners],
+    [],
   );
 
   const register = useCallback(
@@ -988,176 +1039,41 @@ function usePetTapValue() {
         };
       }
 
-      if (!supabase) {
-        return {
-          ok: false,
-          message: "Supabase indisponivel no momento.",
-        };
-      }
-
-      const { data: existingOwners, error: lookupError } = await supabase
-        .from("owners")
-        .select("id")
-        .eq("email", normalized)
-        .limit(1);
-
-      if (lookupError) {
-        return {
-          ok: false,
-          message: lookupError.message || "Falha ao validar e-mail.",
-        };
-      }
-
-      if ((existingOwners ?? []).length > 0) {
-        return {
-          ok: false,
-          message: "Este e-mail ja esta cadastrado.",
-        };
-      }
-
-      const { data: tagRows, error: tagLookupError } = await supabase
-        .from("nfc_tags")
-        .select("id, code, activation_code, owner_id, pet_id, status, created_at, updated_at")
-        .eq("activation_code", activationCode)
-        .limit(2);
-
-      if (tagLookupError) {
-        return {
-          ok: false,
-          message: tagLookupError.message || "Falha ao validar chave de ativacao.",
-        };
-      }
-
-      if (!tagRows || tagRows.length === 0) {
-        return {
-          ok: false,
-          message: "Chave de ativacao invalida.",
-        };
-      }
-
-      if (tagRows.length > 1) {
-        return {
-          ok: false,
-          message: "Chave de ativacao duplicada. Contate o suporte para regularizar esta tag.",
-        };
-      }
-
-      const selectedTag = tagRows[0] as NfcTagRow;
-
-      if (selectedTag.status === "disabled") {
-        return {
-          ok: false,
-          message: "Esta tag esta desativada. Contate o suporte.",
-        };
-      }
-
-      if (selectedTag.owner_id) {
-        return {
-          ok: false,
-          message: "Esta chave de ativacao ja foi utilizada.",
-        };
-      }
-
-      const emailRedirectTo =
-        typeof window !== "undefined" ? `${window.location.origin}/login` : undefined;
-
-      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-        email: normalized,
-        password,
-        options: {
-          data: {
-            full_name: fullName.trim(),
-          },
-          emailRedirectTo,
-        },
-      });
-
-      if (signUpError) {
-        return {
-          ok: false,
-          message: signUpError.message || "Falha ao criar conta.",
-        };
-      }
-
-      const authUser = signUpData.user;
-      if (!authUser) {
-        return {
-          ok: false,
-          message: "Nao foi possivel criar o usuario de autenticacao.",
-        };
-      }
-
-      const newOwner: Owner = {
-        id: authUser.id,
-        fullName: fullName.trim(),
-        email: normalized,
-        password: "__SUPABASE_AUTH__",
-        subscription: createDefaultOwnerSubscription(),
-        alerts: createDefaultOwnerAlerts(),
-        createdAt: authUser.created_at ?? new Date().toISOString(),
-      };
-
       try {
-        await syncOwnerWithSupabase(newOwner);
-      } catch (error) {
-        return {
-          ok: false,
-          message: error instanceof Error ? error.message : "Falha ao salvar dono no banco.",
-        };
-      }
+        const response = await fetch("/api/auth/register", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            fullName: fullName.trim(),
+            email: normalized,
+            password,
+            activationCode,
+          }),
+        });
 
-      const tagUpdatedAt = new Date().toISOString();
-      const { data: claimedRows, error: claimError } = await supabase
-        .from("nfc_tags")
-        .update({
-          owner_id: newOwner.id,
-          updated_at: tagUpdatedAt,
-        })
-        .eq("id", selectedTag.id)
-        .is("owner_id", null)
-        .select("id, code, activation_code, owner_id, pet_id, status, created_at, updated_at")
-        .limit(1);
+        const payload = (await response.json()) as AuthResult;
+        if (!response.ok || !payload.ok) {
+          return {
+            ok: false,
+            message: payload.message ?? "Falha ao criar conta.",
+          };
+        }
 
-      if (claimError) {
-        return {
-          ok: false,
-          message: claimError.message || "Conta criada, mas falhou ao vincular a chave de ativacao.",
-        };
-      }
-
-      if (!claimedRows || claimedRows.length === 0) {
-        return {
-          ok: false,
-          message:
-            "Esta chave de ativacao acabou de ser utilizada por outra conta. Tente outra chave.",
-        };
-      }
-
-      const linkedTag = mapNfcTagRow(claimedRows[0] as NfcTagRow);
-
-      const isConfirmed = Boolean(signUpData.session);
-
-      setState((prev) => ({
-        ...prev,
-        owners: prev.owners.some((owner) => owner.id === newOwner.id)
-          ? prev.owners.map((owner) => (owner.id === newOwner.id ? newOwner : owner))
-          : [...prev.owners, newOwner],
-        nfcTags: prev.nfcTags.some((tag) => tag.id === linkedTag.id)
-          ? prev.nfcTags.map((tag) => (tag.id === linkedTag.id ? linkedTag : tag))
-          : [linkedTag, ...prev.nfcTags],
-        sessionOwnerId: isConfirmed ? newOwner.id : prev.sessionOwnerId,
-      }));
-
-      if (!isConfirmed) {
         return {
           ok: true,
-          requiresEmailConfirmation: true,
+          requiresEmailConfirmation: payload.requiresEmailConfirmation ?? true,
           message:
-            "Conta criada e chave vinculada. Verifique seu e-mail para confirmar antes de entrar.",
+            payload.message ??
+            "Conta criada com sucesso. Confirme seu e-mail e depois faca login.",
+        };
+      } catch {
+        return {
+          ok: false,
+          message: "Falha de conexao ao criar conta.",
         };
       }
-
-      return { ok: true, message: "Conta criada com sucesso e chave NFC vinculada." };
     },
     [],
   );
@@ -1169,6 +1085,10 @@ function usePetTapValue() {
 
     setState((prev) => ({
       ...prev,
+      pets: [],
+      nfcTags: [],
+      scanEvents: [],
+      notifications: [],
       sessionOwnerId: null,
     }));
   }, []);
@@ -1256,15 +1176,14 @@ function usePetTapValue() {
   );
 
   const notifyNearbyTutorsAboutLostPet = useCallback(
-    async (pet: Pet, owner: Owner): Promise<{ count: number; warning?: string }> => {
+    async (pet: Pet): Promise<{ count: number; warning?: string }> => {
       try {
-        const response = await fetch("/api/alerts/lost-pet", {
+        const response = await authFetch("/api/alerts/lost-pet", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            ownerId: owner.id,
             petId: pet.id,
           }),
         });
@@ -1672,7 +1591,7 @@ function usePetTapValue() {
         return { ok: true };
       }
 
-      const alertResult = await notifyNearbyTutorsAboutLostPet(updatedPet, currentOwner);
+      const alertResult = await notifyNearbyTutorsAboutLostPet(updatedPet);
       if (alertResult.count > 0) {
         return {
           ok: true,
@@ -1738,21 +1657,6 @@ function usePetTapValue() {
       const normalizedTagCode = normalizeTagCode(payload.tagCode);
       const providedTagCode = normalizeTagCode(payload.activationCode);
 
-      const tag = state.nfcTags.find((item) => item.code === normalizedTagCode);
-      if (!tag) {
-        return {
-          ok: false,
-          message: "Tag NFC nao encontrada.",
-        };
-      }
-
-      if (tag.status === "disabled") {
-        return {
-          ok: false,
-          message: "Esta tag esta desativada.",
-        };
-      }
-
       if (!providedTagCode) {
         return {
           ok: false,
@@ -1764,13 +1668,6 @@ function usePetTapValue() {
         return {
           ok: false,
           message: "Codigo NFC informado nao confere com esta tag.",
-        };
-      }
-
-      if (tag.ownerId && tag.ownerId !== currentOwner.id) {
-        return {
-          ok: false,
-          message: "Esta tag ja pertence a outro tutor.",
         };
       }
 
@@ -1789,23 +1686,6 @@ function usePetTapValue() {
         };
       }
 
-      const existingTagForPet = state.nfcTags.find(
-        (item) => item.petId === payload.petId && item.id !== tag.id,
-      );
-      if (existingTagForPet) {
-        return {
-          ok: false,
-          message: `Este pet ja possui uma tag NFC vinculada (${existingTagForPet.code}).`,
-        };
-      }
-
-      if (tag.ownerId === currentOwner.id && tag.petId === payload.petId && tag.status === "active") {
-        return {
-          ok: true,
-          message: "Esta tag ja esta vinculada a este pet.",
-        };
-      }
-
       const supabaseErrorMessage = requireSupabaseConfigured();
       if (supabaseErrorMessage) {
         return {
@@ -1814,23 +1694,48 @@ function usePetTapValue() {
         };
       }
 
-      const updatedTag: NfcTag = {
-        ...tag,
-        ownerId: currentOwner.id,
-        petId: payload.petId,
-        status: "active",
-        updatedAt: new Date().toISOString(),
-      };
-
       try {
-        await syncNfcTagWithSupabase(updatedTag);
+        const response = await authFetch("/api/tags/activate", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            tagCode: normalizedTagCode,
+            petId: payload.petId,
+          }),
+        });
+
+        const payloadResponse = (await response.json()) as ActivateTagResponse;
+        if (!response.ok || !payloadResponse.ok || !payloadResponse.tag) {
+          return {
+            ok: false,
+            message: payloadResponse.message ?? "Falha ao ativar tag NFC.",
+          };
+        }
+
+        const updatedTag: NfcTag = {
+          id: payloadResponse.tag.id,
+          code: normalizeTagCode(payloadResponse.tag.code),
+          activationCode: "",
+          ownerId: payloadResponse.tag.ownerId,
+          petId: payloadResponse.tag.petId,
+          status: payloadResponse.tag.status,
+          createdAt: payloadResponse.tag.createdAt,
+          updatedAt: payloadResponse.tag.updatedAt,
+        };
 
         setState((prev) => ({
           ...prev,
-          nfcTags: prev.nfcTags.map((item) => (item.id === updatedTag.id ? updatedTag : item)),
+          nfcTags: prev.nfcTags.some((item) => item.id === updatedTag.id)
+            ? prev.nfcTags.map((item) => (item.id === updatedTag.id ? updatedTag : item))
+            : [updatedTag, ...prev.nfcTags],
         }));
 
-        return { ok: true };
+        return {
+          ok: true,
+          message: payloadResponse.message ?? "Tag ativada e vinculada com sucesso.",
+        };
       } catch (error) {
         return {
           ok: false,
@@ -1838,214 +1743,112 @@ function usePetTapValue() {
         };
       }
     },
-    [currentOwner, state.nfcTags, state.pets],
+    [currentOwner, state.pets],
   );
 
   const createNfcTag = useCallback(
     async (payload: { code?: string; activationCode?: string }) => {
-      const supabaseErrorMessage = requireSupabaseConfigured();
-      if (supabaseErrorMessage) {
+      try {
+        const response = await fetch("/api/admin/tags", {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            code: normalizeTagCode(payload.code ?? ""),
+            activationCode: normalizeActivationCode(payload.activationCode),
+          }),
+        });
+
+        const result = (await response.json()) as {
+          ok: boolean;
+          message?: string;
+          tag?: {
+            id: string;
+            code: string;
+            activationCode: string;
+            ownerId: string | null;
+            petId: string | null;
+            status: NfcTagStatus;
+            createdAt: string;
+            updatedAt: string;
+          };
+        };
+
+        if (!response.ok || !result.ok || !result.tag) {
+          return {
+            ok: false,
+            message: result.message ?? "Falha ao criar tag NFC.",
+          };
+        }
+
+        const createdTag: NfcTag = {
+          id: result.tag.id,
+          code: normalizeTagCode(result.tag.code),
+          activationCode: normalizeActivationCode(result.tag.activationCode),
+          ownerId: result.tag.ownerId,
+          petId: result.tag.petId,
+          status: result.tag.status,
+          createdAt: result.tag.createdAt,
+          updatedAt: result.tag.updatedAt,
+        };
+
+        setState((prev) => ({
+          ...prev,
+          nfcTags: prev.nfcTags.some((tag) => tag.id === createdTag.id)
+            ? prev.nfcTags.map((tag) => (tag.id === createdTag.id ? createdTag : tag))
+            : [createdTag, ...prev.nfcTags],
+        }));
+
+        return {
+          ok: true,
+          tag: createdTag,
+        };
+      } catch (error) {
         return {
           ok: false,
-          message: supabaseErrorMessage,
+          message: getErrorMessage(error) || "Falha ao criar tag NFC.",
         };
       }
-
-      if (!supabase) {
-        return {
-          ok: false,
-          message: "Supabase indisponivel no momento.",
-        };
-      }
-
-      const requestedCode = normalizeTagCode(payload.code ?? "");
-      const requestedActivationCode = normalizeActivationCode(payload.activationCode);
-      const maxAttempts = requestedCode ? 1 : 10;
-
-      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-        let code = requestedCode;
-
-        if (!requestedCode) {
-          const { data: existingTagCodeRows, error: existingTagCodeError } = await supabase
-            .from("nfc_tags")
-            .select("code");
-
-          if (existingTagCodeError) {
-            return {
-              ok: false,
-              message: existingTagCodeError.message || "Falha ao listar codigos de tags existentes.",
-            };
-          }
-
-          const usedCodes = new Set<string>(state.nfcTags.map((tag) => tag.code));
-
-          for (const row of existingTagCodeRows ?? []) {
-            const codeFromRow = normalizeTagCode((row as { code?: string }).code ?? "");
-            if (codeFromRow) {
-              usedCodes.add(codeFromRow);
-            }
-          }
-
-          code = generateNextTagCode(usedCodes);
-        }
-
-        if (state.nfcTags.some((tag) => tag.code === code)) {
-          if (!requestedCode) {
-            continue;
-          }
-
-          return {
-            ok: false,
-            message: "Ja existe uma tag com este codigo.",
-          };
-        }
-
-        const activationCode = requestedActivationCode || generateActivationCode();
-
-        if (
-          state.nfcTags.some(
-            (tag) =>
-              normalizeActivationCode(tag.activationCode) ===
-              normalizeActivationCode(activationCode),
-          )
-        ) {
-          if (!requestedActivationCode) {
-            continue;
-          }
-
-          return {
-            ok: false,
-            message: "Ja existe uma tag com esta chave de ativacao.",
-          };
-        }
-
-        const { data: existingCodeRows, error: existingCodeError } = await supabase
-          .from("nfc_tags")
-          .select("id")
-          .eq("code", code)
-          .limit(1);
-
-        if (existingCodeError) {
-          return {
-            ok: false,
-            message: existingCodeError.message || "Falha ao validar codigo da tag.",
-          };
-        }
-
-        if ((existingCodeRows ?? []).length > 0) {
-          if (!requestedCode) {
-            continue;
-          }
-
-          return {
-            ok: false,
-            message: "Ja existe uma tag com este codigo.",
-          };
-        }
-
-        const { data: existingActivationRows, error: existingActivationError } = await supabase
-          .from("nfc_tags")
-          .select("id")
-          .eq("activation_code", activationCode)
-          .limit(1);
-
-        if (existingActivationError) {
-          return {
-            ok: false,
-            message: existingActivationError.message || "Falha ao validar chave de ativacao.",
-          };
-        }
-
-        if ((existingActivationRows ?? []).length > 0) {
-          if (!requestedActivationCode) {
-            continue;
-          }
-
-          return {
-            ok: false,
-            message: "Ja existe uma tag com esta chave de ativacao.",
-          };
-        }
-
-        const now = new Date().toISOString();
-        const tag: NfcTag = {
-          id: createId("tag"),
-          code,
-          activationCode,
-          ownerId: null,
-          petId: null,
-          status: "unlinked",
-          createdAt: now,
-          updatedAt: now,
-        };
-
-        try {
-          await syncNfcTagWithSupabase(tag);
-          setState((prev) => ({
-            ...prev,
-            nfcTags: [tag, ...prev.nfcTags],
-          }));
-
-          return {
-            ok: true,
-            tag,
-          };
-        } catch (error) {
-          if (isDuplicateCodeError(error) && !requestedCode) {
-            continue;
-          }
-
-          if (isDuplicateCodeError(error)) {
-            return {
-              ok: false,
-              message: "Ja existe uma tag com este codigo.",
-            };
-          }
-
-          return {
-            ok: false,
-            message: getErrorMessage(error) || "Falha ao criar tag NFC.",
-          };
-        }
-      }
-
-      return {
-        ok: false,
-        message: "Nao foi possivel gerar um codigo NFC unico. Tente novamente.",
-      };
     },
-    [state.nfcTags],
+    [],
   );
 
   const setNfcTagStatus = useCallback(
     async (tagId: string, status: NfcTagStatus): Promise<AuthResult> => {
-      const tag = state.nfcTags.find((item) => item.id === tagId);
-      if (!tag) {
-        return {
-          ok: false,
-          message: "Tag nao encontrada.",
-        };
-      }
-
-      const supabaseErrorMessage = requireSupabaseConfigured();
-      if (supabaseErrorMessage) {
-        return {
-          ok: false,
-          message: supabaseErrorMessage,
-        };
-      }
-
-      const updatedTag: NfcTag = {
-        ...tag,
-        status,
-        updatedAt: new Date().toISOString(),
-      };
-
       try {
-        await syncNfcTagWithSupabase(updatedTag);
+        const response = await fetch(`/api/admin/tags/${encodeURIComponent(tagId)}`, {
+          method: "PATCH",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            action: "setStatus",
+            status,
+          }),
+        });
+
+        const payload = (await response.json()) as AuthResult;
+        if (!response.ok || !payload.ok) {
+          return {
+            ok: false,
+            message: payload.message ?? "Falha ao atualizar status da tag.",
+          };
+        }
+
         setState((prev) => ({
           ...prev,
-          nfcTags: prev.nfcTags.map((item) => (item.id === tagId ? updatedTag : item)),
+          nfcTags: prev.nfcTags.map((item) =>
+            item.id === tagId
+              ? {
+                  ...item,
+                  status,
+                  updatedAt: new Date().toISOString(),
+                }
+              : item,
+          ),
         }));
 
         return { ok: true };
@@ -2056,40 +1859,44 @@ function usePetTapValue() {
         };
       }
     },
-    [state.nfcTags],
+    [],
   );
 
   const unlinkNfcTag = useCallback(
     async (tagId: string): Promise<AuthResult> => {
-      const tag = state.nfcTags.find((item) => item.id === tagId);
-      if (!tag) {
-        return {
-          ok: false,
-          message: "Tag nao encontrada.",
-        };
-      }
-
-      const supabaseErrorMessage = requireSupabaseConfigured();
-      if (supabaseErrorMessage) {
-        return {
-          ok: false,
-          message: supabaseErrorMessage,
-        };
-      }
-
-      const updatedTag: NfcTag = {
-        ...tag,
-        ownerId: null,
-        petId: null,
-        status: "unlinked",
-        updatedAt: new Date().toISOString(),
-      };
-
       try {
-        await syncNfcTagWithSupabase(updatedTag);
+        const response = await fetch(`/api/admin/tags/${encodeURIComponent(tagId)}`, {
+          method: "PATCH",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            action: "unlink",
+          }),
+        });
+
+        const payload = (await response.json()) as AuthResult;
+        if (!response.ok || !payload.ok) {
+          return {
+            ok: false,
+            message: payload.message ?? "Falha ao desvincular tag NFC.",
+          };
+        }
+
         setState((prev) => ({
           ...prev,
-          nfcTags: prev.nfcTags.map((item) => (item.id === tagId ? updatedTag : item)),
+          nfcTags: prev.nfcTags.map((item) =>
+            item.id === tagId
+              ? {
+                  ...item,
+                  ownerId: null,
+                  petId: null,
+                  status: "unlinked",
+                  updatedAt: new Date().toISOString(),
+                }
+              : item,
+          ),
         }));
 
         return { ok: true };
@@ -2100,54 +1907,54 @@ function usePetTapValue() {
         };
       }
     },
-    [state.nfcTags],
+    [],
   );
 
   const recordScan = useCallback(
     (slug: string, source: ScanSource, viewerLocation: string) => {
       const pet = state.pets.find((candidate) => candidate.slug === slug);
 
-      if (!pet) {
-        return null;
-      }
-
-      const event: ScanEvent = {
-        id: createId("scan"),
-        petId: pet.id,
-        petName: pet.name,
-        ownerId: pet.ownerId,
-        source,
-        viewerLocation,
-        createdAt: new Date().toISOString(),
-      };
-
-      const notification: AccessNotification = {
-        id: createId("notification"),
-        ownerId: pet.ownerId,
-        petId: pet.id,
-        message: `${pet.name} recebeu um acesso via ${source.toUpperCase()} (${viewerLocation || "local nao informado"}).`,
-        read: false,
-        createdAt: event.createdAt,
-      };
-
-      setState((prev) => ({
-        ...prev,
-        scanEvents: [event, ...prev.scanEvents],
-        notifications: [notification, ...prev.notifications],
-      }));
-
-      if (supabase) {
-        void supabase.from("scan_events").insert({
-          id: event.id,
-          pet_id: pet.id,
-          owner_id: pet.ownerId,
+      if (pet) {
+        const event: ScanEvent = {
+          id: createId("scan"),
+          petId: pet.id,
+          petName: pet.name,
+          ownerId: pet.ownerId,
           source,
-          viewer_location: viewerLocation,
-          accessed_at: event.createdAt,
-        });
+          viewerLocation,
+          createdAt: new Date().toISOString(),
+        };
+
+        const notification: AccessNotification = {
+          id: createId("notification"),
+          ownerId: pet.ownerId,
+          petId: pet.id,
+          message: `${pet.name} recebeu um acesso via ${source.toUpperCase()} (${viewerLocation || "local nao informado"}).`,
+          read: false,
+          createdAt: event.createdAt,
+        };
+
+        setState((prev) => ({
+          ...prev,
+          scanEvents: [event, ...prev.scanEvents],
+          notifications: [notification, ...prev.notifications],
+        }));
       }
 
-      return pet;
+      void fetch("/api/public/scan", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        keepalive: true,
+        body: JSON.stringify({
+          slug,
+          source,
+          viewerLocation,
+        }),
+      });
+
+      return pet ?? null;
     },
     [state.pets],
   );
@@ -2156,11 +1963,24 @@ function usePetTapValue() {
     (tagCode: string, viewerLocation: string) => {
       const pet = resolvePetByTagCode(tagCode);
 
-      if (!pet) {
-        return null;
+      if (pet) {
+        return recordScan(pet.slug, "nfc", viewerLocation);
       }
 
-      return recordScan(pet.slug, "nfc", viewerLocation);
+      void fetch("/api/public/scan", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        keepalive: true,
+        body: JSON.stringify({
+          tagCode: normalizeTagCode(tagCode),
+          source: "nfc",
+          viewerLocation,
+        }),
+      });
+
+      return null;
     },
     [recordScan, resolvePetByTagCode],
   );
@@ -2170,14 +1990,12 @@ function usePetTapValue() {
       return;
     }
 
-    const ownerId = currentOwner.id;
-
     setState((prev) => ({
       ...prev,
       notifications: prev.notifications.filter((notification) => notification.id !== notificationId),
     }));
 
-    void fetch("/api/notifications/clear", {
+    void authFetch("/api/notifications/clear", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -2185,7 +2003,6 @@ function usePetTapValue() {
       mode: "same-origin",
       keepalive: true,
       body: JSON.stringify({
-        ownerId,
         notificationId,
       }),
     });
@@ -2203,16 +2020,14 @@ function usePetTapValue() {
       notifications: prev.notifications.filter((notification) => notification.ownerId !== ownerId),
     }));
 
-    void fetch("/api/notifications/clear", {
+    void authFetch("/api/notifications/clear", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
       mode: "same-origin",
       keepalive: true,
-      body: JSON.stringify({
-        ownerId,
-      }),
+      body: JSON.stringify({}),
     });
   }, [currentOwner]);
 

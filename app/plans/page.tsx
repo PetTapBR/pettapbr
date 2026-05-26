@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { usePetTap } from "@/context/pettap-provider";
+import { authFetch } from "@/lib/auth-client";
 import { reverseGeocodeLabel } from "@/lib/geocode-client";
 import { isOwnerPro } from "@/lib/owner-defaults";
 
@@ -185,14 +186,12 @@ export default function PlansPage() {
       setIsVerifyingBilling(true);
 
       try {
-        const response = await fetch("/api/billing/asaas/subscription/sync", {
+        const response = await authFetch("/api/billing/asaas/subscription/sync", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({
-            ownerId: currentOwner.id,
-          }),
+          body: JSON.stringify({}),
         });
 
         const data = (await response.json()) as SyncSubscriptionResponse;
@@ -352,13 +351,12 @@ export default function PlansPage() {
     setPlanFeedback(`Gerando cobranca de ${renewalMonths} mes(es) no Asaas...`);
 
     try {
-      const response = await fetch("/api/billing/asaas/subscription/start", {
+      const response = await authFetch("/api/billing/asaas/subscription/start", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          ownerId: currentOwner.id,
           cpfCnpj: normalizedCpfCnpj,
           phone,
           billingType,

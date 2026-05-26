@@ -14,10 +14,12 @@ import {
   clampRenewalMonths,
   isIsoDateInFuture,
 } from "@/lib/plan-billing";
+import { consumeRateLimit } from "@/lib/rate-limit";
+import { requireAuthenticatedUser } from "@/lib/request-auth";
+import { getRequestIp } from "@/lib/request-security";
 import { createSupabaseServerClient, hasSupabaseServerClient } from "@/lib/supabase-server";
 
 interface StartSubscriptionBody {
-  ownerId?: string;
   cpfCnpj?: string;
   phone?: string;
   billingType?: AsaasBillingType;
@@ -43,12 +45,17 @@ function getPaymentUrl(payment: {
 }
 
 export async function POST(request: Request) {
+  const auth = await requireAuthenticatedUser(request);
+  if (!auth.ok) {
+    return auth.response;
+  }
+
   if (!hasSupabaseServerClient()) {
     return NextResponse.json(
       {
         ok: false,
         message:
-          "Configure NEXT_PUBLIC_SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY (ou NEXT_PUBLIC_SUPABASE_ANON_KEY) para continuar.",
+          "Configure NEXT_PUBLIC_SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY para continuar.",
       },
       { status: 500 },
     );
@@ -68,23 +75,34 @@ export async function POST(request: Request) {
     );
   }
 
-  const ownerId = (body.ownerId ?? "").trim();
+  const ownerId = auth.user.id;
+  const rateLimit = consumeRateLimit({
+    key: `billing-start:${ownerId}:${getRequestIp(request)}`,
+    maxRequests: 25,
+    windowMs: 60 * 60 * 1000,
+  });
+
+  if (!rateLimit.ok) {
+    return NextResponse.json(
+      {
+        ok: false,
+        message: "Muitas tentativas de gerar cobranca. Aguarde para tentar novamente.",
+      },
+      {
+        status: 429,
+        headers: {
+          "Retry-After": String(rateLimit.retryAfterSeconds),
+        },
+      },
+    );
+  }
+
   const cpfCnpj = sanitizeCpfCnpj(body.cpfCnpj ?? "");
   const phone = sanitizePhone(body.phone ?? "");
   const billingType = body.billingType ?? "PIX";
   const months = clampRenewalMonths(
     typeof body.months === "number" ? body.months : Number(body.months ?? 1),
   );
-
-  if (!ownerId) {
-    return NextResponse.json(
-      {
-        ok: false,
-        message: "ownerId e obrigatorio.",
-      },
-      { status: 400 },
-    );
-  }
 
   const supabase = createSupabaseServerClient();
 

@@ -1,12 +1,14 @@
 import { NextResponse } from "next/server";
 
 import { createDefaultOwnerAlerts } from "@/lib/owner-defaults";
+import { consumeRateLimit } from "@/lib/rate-limit";
+import { requireAuthenticatedUser } from "@/lib/request-auth";
+import { getRequestIp } from "@/lib/request-security";
 import { createSupabaseServerClient, hasSupabaseServerClient } from "@/lib/supabase-server";
 import { calculateDistanceKm, createId } from "@/lib/utils";
 import { isWebPushConfigured, sendWebPushNotification } from "@/lib/web-push";
 
 interface LostPetAlertBody {
-  ownerId?: string;
   petId?: string;
 }
 
@@ -44,6 +46,11 @@ function isValidCoordinate(value: number | null): value is number {
 }
 
 export async function POST(request: Request) {
+  const auth = await requireAuthenticatedUser(request);
+  if (!auth.ok) {
+    return auth.response;
+  }
+
   if (!hasSupabaseServerClient()) {
     return NextResponse.json(
       {
@@ -68,14 +75,35 @@ export async function POST(request: Request) {
     );
   }
 
-  const ownerId = (body.ownerId ?? "").trim();
-  const petId = (body.petId ?? "").trim();
+  const ownerId = auth.user.id;
+  const rateLimit = consumeRateLimit({
+    key: `lost-pet-alert:${ownerId}:${getRequestIp(request)}`,
+    maxRequests: 20,
+    windowMs: 60 * 60 * 1000,
+  });
 
-  if (!ownerId || !petId) {
+  if (!rateLimit.ok) {
     return NextResponse.json(
       {
         ok: false,
-        message: "ownerId e petId sao obrigatorios.",
+        message: "Muitos alertas enviados em pouco tempo. Aguarde para tentar novamente.",
+      },
+      {
+        status: 429,
+        headers: {
+          "Retry-After": String(rateLimit.retryAfterSeconds),
+        },
+      },
+    );
+  }
+
+  const petId = (body.petId ?? "").trim();
+
+  if (!petId) {
+    return NextResponse.json(
+      {
+        ok: false,
+        message: "petId e obrigatorio.",
       },
       { status: 400 },
     );
