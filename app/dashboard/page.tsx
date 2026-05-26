@@ -32,6 +32,12 @@ export default function DashboardPage() {
     reward: string;
   } | null>(null);
   const [isLostModeSubmitting, setIsLostModeSubmitting] = useState(false);
+  const [nfcLinkModal, setNfcLinkModal] = useState<{
+    petId: string;
+    petName: string;
+    code: string;
+  } | null>(null);
+  const [nfcLinkError, setNfcLinkError] = useState("");
 
   useEffect(() => {
     if (isReady && !currentOwner) {
@@ -53,15 +59,30 @@ export default function DashboardPage() {
   const isProPlan = isOwnerPro(currentOwner);
   const planLabel = isProPlan ? "Pro" : "Start";
 
-  function openNfcLinkFlow(petId: string) {
-    const input = window.prompt("Digite o Codigo NFC da tag (ex: PTBR-NFC-010).") ?? "";
-    const normalized = normalizeTagCode(input);
+  function openNfcLinkFlow(petId: string, petName: string) {
+    setNfcLinkError("");
+    setNfcLinkModal({
+      petId,
+      petName,
+      code: "",
+    });
+  }
 
-    if (!normalized) {
+  function handleConfirmNfcLink() {
+    if (!nfcLinkModal) {
       return;
     }
 
-    router.push(`/t/${encodeURIComponent(normalized)}?pet=${encodeURIComponent(petId)}`);
+    const normalized = normalizeTagCode(nfcLinkModal.code);
+    if (!normalized) {
+      setNfcLinkError("Digite o Codigo NFC da tag para continuar.");
+      return;
+    }
+
+    setNfcLinkError("");
+    const nextUrl = `/t/${encodeURIComponent(normalized)}?pet=${encodeURIComponent(nfcLinkModal.petId)}`;
+    setNfcLinkModal(null);
+    router.push(nextUrl);
   }
 
   async function handleStatusChange(petId: string, status: "safe" | "lost" | "found", reward = "") {
@@ -248,13 +269,13 @@ export default function DashboardPage() {
                     Abrir link NFC
                   </Link>
                 ) : (
-                  <button
-                    type="button"
-                    onClick={() => openNfcLinkFlow(pet.id)}
-                    className="col-span-2 rounded-xl border border-dashed border-cyan-300/35 bg-cyan-500/10 px-3 py-2 text-center text-xs font-semibold uppercase tracking-[0.1em] text-cyan-100 transition hover:bg-cyan-500/20 sm:tracking-[0.14em]"
-                  >
-                    Vincular Tag NFC
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => openNfcLinkFlow(pet.id, pet.name)}
+                      className="col-span-2 rounded-xl border border-dashed border-cyan-300/35 bg-cyan-500/10 px-3 py-2 text-center text-xs font-semibold uppercase tracking-[0.1em] text-cyan-100 transition hover:bg-cyan-500/20 sm:tracking-[0.14em]"
+                    >
+                      Vincular Tag NFC
+                    </button>
                 )}
               </div>
 
@@ -442,6 +463,61 @@ export default function DashboardPage() {
                 className="rounded-full bg-rose-500 px-5 py-3 text-xs font-semibold uppercase tracking-[0.14em] text-white transition hover:bg-rose-400 disabled:cursor-not-allowed disabled:opacity-70"
               >
                 {isLostModeSubmitting ? "Ativando..." : "Ativar Modo Perdido"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {nfcLinkModal ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
+          <div className="w-full max-w-md rounded-3xl border border-cyan-300/35 bg-zinc-950/95 p-6 shadow-2xl shadow-black/70 backdrop-blur-xl">
+            <p className="text-xs uppercase tracking-[0.14em] text-cyan-200">Vincular tag NFC</p>
+            <h3 className="mt-2 text-2xl font-semibold tracking-tight text-white">
+              Vincular em {nfcLinkModal.petName}
+            </h3>
+            <p className="mt-2 text-sm text-zinc-300">
+              Digite o Codigo NFC da tag para abrir a tela de vinculacao desse pet.
+            </p>
+
+            <label className="mt-5 grid gap-2 text-sm text-zinc-300">
+              <span className="text-xs uppercase tracking-[0.14em] text-zinc-400">Codigo NFC</span>
+              <input
+                type="text"
+                value={nfcLinkModal.code}
+                autoFocus
+                onChange={(event) => {
+                  const nextValue = event.target.value.toUpperCase().replace(/\s+/g, "");
+                  setNfcLinkModal((prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          code: nextValue,
+                        }
+                      : prev,
+                  );
+                }}
+                placeholder="Ex: PTBR-NFC-010"
+                className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition placeholder:text-zinc-500 focus:border-cyan-300/60 focus:bg-white/10"
+              />
+            </label>
+
+            {nfcLinkError ? <p className="mt-3 text-sm text-rose-300">{nfcLinkError}</p> : null}
+
+            <div className="mt-6 flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={() => setNfcLinkModal(null)}
+                className="rounded-full border border-white/20 px-5 py-3 text-xs font-semibold uppercase tracking-[0.14em] text-zinc-200 transition hover:bg-white/10"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmNfcLink}
+                className="rounded-full bg-cyan-500 px-5 py-3 text-xs font-semibold uppercase tracking-[0.14em] text-zinc-950 transition hover:bg-cyan-400"
+              >
+                Continuar
               </button>
             </div>
           </div>
