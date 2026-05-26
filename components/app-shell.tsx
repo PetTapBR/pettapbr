@@ -3,6 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect } from "react";
 
 import { usePetTap } from "@/context/pettap-provider";
 
@@ -27,6 +28,113 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { currentOwner, logout } = usePetTap();
 
   const isPublicPetPage = pathname.startsWith("/p/") || pathname.startsWith("/t/");
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const currentUrl = new URL(window.location.href);
+    const hashParams = new URLSearchParams(
+      currentUrl.hash.startsWith("#") ? currentUrl.hash.slice(1) : currentUrl.hash,
+    );
+
+    const hasRecoveryMarker =
+      currentUrl.searchParams.get("type") === "recovery" ||
+      currentUrl.searchParams.get("mode") === "recovery" ||
+      hashParams.get("type") === "recovery";
+
+    if (!hasRecoveryMarker) {
+      return;
+    }
+
+    if (currentUrl.pathname.startsWith("/login")) {
+      return;
+    }
+
+    const redirectUrl = new URL("/login", currentUrl.origin);
+    redirectUrl.searchParams.set("mode", "recovery");
+
+    const passthroughKeys = ["code", "type", "error", "error_description"];
+    for (const key of passthroughKeys) {
+      const value = currentUrl.searchParams.get(key);
+      if (value) {
+        redirectUrl.searchParams.set(key, value);
+      }
+    }
+
+    const hash = currentUrl.hash || "";
+    window.location.replace(`${redirectUrl.toString()}${hash}`);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const reloadFlagKey = "__pettapbr_chunk_reload_once__";
+
+    const normalizeReason = (value: unknown) => {
+      if (typeof value === "string") {
+        return value;
+      }
+
+      if (value && typeof value === "object" && "message" in value) {
+        const message = (value as { message?: unknown }).message;
+        if (typeof message === "string") {
+          return message;
+        }
+      }
+
+      return "";
+    };
+
+    const isChunkError = (message: string) => {
+      const normalized = message.toLowerCase();
+      return (
+        normalized.includes("chunkloaderror") ||
+        normalized.includes("loading chunk") ||
+        normalized.includes("failed to load chunk") ||
+        normalized.includes("router action dispatched before initialization")
+      );
+    };
+
+    const tryRecover = (reason: unknown) => {
+      const message = normalizeReason(reason);
+      if (!message || !isChunkError(message)) {
+        return;
+      }
+
+      const hasReloadedOnce = window.sessionStorage.getItem(reloadFlagKey) === "1";
+      if (hasReloadedOnce) {
+        return;
+      }
+
+      window.sessionStorage.setItem(reloadFlagKey, "1");
+      window.location.reload();
+    };
+
+    const handleWindowError = (event: ErrorEvent) => {
+      tryRecover(event.error ?? event.message);
+    };
+
+    const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
+      tryRecover(event.reason);
+    };
+
+    window.addEventListener("error", handleWindowError);
+    window.addEventListener("unhandledrejection", handleUnhandledRejection);
+
+    const clearFlagTimeout = window.setTimeout(() => {
+      window.sessionStorage.removeItem(reloadFlagKey);
+    }, 12000);
+
+    return () => {
+      window.removeEventListener("error", handleWindowError);
+      window.removeEventListener("unhandledrejection", handleUnhandledRejection);
+      window.clearTimeout(clearFlagTimeout);
+    };
+  }, []);
 
   return (
     <div className="relative flex min-h-screen flex-col bg-zinc-950 text-zinc-100">
