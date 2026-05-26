@@ -7,6 +7,7 @@ import {
   getAsaasProPrice,
   sanitizeCpfCnpj,
   sanitizePhone,
+  type AsaasPayment,
   type AsaasBillingType,
 } from "@/lib/asaas";
 import {
@@ -52,6 +53,23 @@ function resolveSuccessCallbackUrl() {
     return configured;
   }
   return "";
+}
+
+function normalizeMessageForMatch(value: string) {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function isAsaasInvalidCustomerError(message: string) {
+  const normalized = normalizeMessageForMatch(message);
+  return (
+    normalized.includes("customer invalido") ||
+    normalized.includes("customer nao informado") ||
+    normalized.includes("invalid customer") ||
+    normalized.includes("customer not found")
+  );
 }
 
 export async function POST(request: Request) {
@@ -190,7 +208,55 @@ export async function POST(request: Request) {
         }
       : paymentPayload;
 
-    const payment = await createAsaasPayment(payloadWithCallback);
+    let payment: AsaasPayment;
+    try {
+      payment = await createAsaasPayment(payloadWithCallback);
+    } catch (paymentError) {
+      const paymentErrorMessage =
+        paymentError instanceof Error ? paymentError.message : "Falha ao criar cobranca no Asaas.";
+
+      if (!isAsaasInvalidCustomerError(paymentErrorMessage)) {
+        throw paymentError;
+      }
+
+      if (cpfCnpj.length !== 11 && cpfCnpj.length !== 14) {
+        return NextResponse.json(
+          {
+            ok: false,
+            message:
+              "Cadastro do cliente no Asaas invalido para este ambiente. Informe CPF/CNPJ para recriar e tente novamente.",
+          },
+          { status: 400 },
+        );
+      }
+
+      const recreatedCustomer = await createAsaasCustomer({
+        name: owner.full_name,
+        email: owner.email,
+        cpfCnpj,
+        mobilePhone: phone || undefined,
+        externalReference: owner.id,
+      });
+
+      asaasCustomerId = recreatedCustomer.id;
+
+      const retryPayload = callbackSuccessUrl
+        ? {
+            ...paymentPayload,
+            customer: asaasCustomerId,
+            callback: {
+              successUrl: callbackSuccessUrl,
+              autoRedirect: true,
+            },
+          }
+        : {
+            ...paymentPayload,
+            customer: asaasCustomerId,
+          };
+
+      payment = await createAsaasPayment(retryPayload);
+    }
+
     const paymentUrl = getPaymentUrl(payment);
 
     const nowIso = new Date().toISOString();
@@ -236,13 +302,12 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error("[asaas/subscription/start] erro ao gerar cobranca", error);
     const errorMessage = error instanceof Error ? error.message : "Falha ao iniciar cobranca no Asaas.";
-    const normalizedMessage = errorMessage.toLowerCase();
+    const normalizedMessage = normalizeMessageForMatch(errorMessage);
     const statusCode =
       normalizedMessage.includes("invalid_environment") ||
       normalizedMessage.includes("api key") ||
       normalizedMessage.includes("chave de api") ||
       normalizedMessage.includes("nao pertence a este ambiente") ||
-      normalizedMessage.includes("não pertence a este ambiente") ||
       normalizedMessage.includes("ambiente") ||
       normalizedMessage.includes("token") ||
       normalizedMessage.includes("dominio")
