@@ -39,6 +39,7 @@ export const emptyPetFormValues: PetFormValues = {
   locationLabel: "",
   reward: "",
   status: "safe",
+  isPublicProfile: false,
   allergies: "",
   medications: "",
   vaccines: "",
@@ -280,6 +281,14 @@ export function PetForm({
 
   const isPremium = isPremiumPlan;
   const isLostMode = useMemo(() => values.status === "lost", [values.status]);
+  const hasSensitivePublicData = useMemo(
+    () =>
+      Boolean(values.phone.trim()) ||
+      Boolean(values.locationLabel.trim()) ||
+      values.locationLat !== null ||
+      values.locationLng !== null,
+    [values.locationLabel, values.locationLat, values.locationLng, values.phone],
+  );
   const selectedCountryOption = useMemo(
     () => COUNTRY_DIAL_OPTIONS.find((country) => country.code === whatsappCountryCode) ?? COUNTRY_DIAL_OPTIONS[0],
     [whatsappCountryCode],
@@ -963,6 +972,30 @@ export function PetForm({
             />
           ) : null}
         </div>
+
+        <label className="grid gap-2 text-sm text-zinc-300">
+          <span className="text-xs uppercase tracking-[0.14em] text-zinc-400">Perfil publico</span>
+          <select
+            value={values.isPublicProfile ? "public" : "private"}
+            onChange={(event) => updateField("isPublicProfile", event.target.value === "public")}
+            className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-300/60 focus:bg-white/10"
+          >
+            <option value="private" className="bg-zinc-900 text-white">
+              Privado
+            </option>
+            <option value="public" className="bg-zinc-900 text-white">
+              Publico
+            </option>
+          </select>
+          <p className="text-xs text-zinc-400">
+            Recomendacao LGPD: mantenha privado enquanto houver telefone ou endereco sensivel.
+          </p>
+          {values.isPublicProfile && hasSensitivePublicData ? (
+            <p className="text-xs text-amber-200">
+              Aviso: este perfil esta publico com dados sensiveis preenchidos.
+            </p>
+          ) : null}
+        </label>
 
         {isPremium ? (
           <div className="rounded-2xl border border-white/10 bg-white/5 p-4">

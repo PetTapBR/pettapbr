@@ -22,6 +22,15 @@ create table if not exists owners (
   alerts_location_lat double precision,
   alerts_location_lng double precision,
   alerts_location_label text not null default '',
+  terms_accepted_at timestamptz,
+  terms_accepted_version text not null default 'v1',
+  terms_accepted_ip text not null default '',
+  privacy_accepted_at timestamptz,
+  privacy_accepted_version text not null default 'v1',
+  privacy_accepted_ip text not null default '',
+  lgpd_consent_at timestamptz,
+  lgpd_consent_version text not null default 'v1',
+  lgpd_consent_ip text not null default '',
   created_at timestamptz not null default now()
 );
 
@@ -41,6 +50,15 @@ alter table owners add column if not exists alerts_radius_km integer not null de
 alter table owners add column if not exists alerts_location_lat double precision;
 alter table owners add column if not exists alerts_location_lng double precision;
 alter table owners add column if not exists alerts_location_label text not null default '';
+alter table owners add column if not exists terms_accepted_at timestamptz;
+alter table owners add column if not exists terms_accepted_version text not null default 'v1';
+alter table owners add column if not exists terms_accepted_ip text not null default '';
+alter table owners add column if not exists privacy_accepted_at timestamptz;
+alter table owners add column if not exists privacy_accepted_version text not null default 'v1';
+alter table owners add column if not exists privacy_accepted_ip text not null default '';
+alter table owners add column if not exists lgpd_consent_at timestamptz;
+alter table owners add column if not exists lgpd_consent_version text not null default 'v1';
+alter table owners add column if not exists lgpd_consent_ip text not null default '';
 
 do $$
 begin
@@ -93,12 +111,15 @@ create table if not exists pets (
   location_label text not null default '',
   reward text not null default '',
   status text not null check (status in ('safe', 'lost', 'found')),
+  is_public boolean not null default true,
   allergies text not null default '',
   medications text not null default '',
   vaccines text not null default '',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table pets add column if not exists is_public boolean not null default true;
 
 create table if not exists pet_media (
   id text primary key,
@@ -137,6 +158,19 @@ create table if not exists notifications (
   created_at timestamptz not null default now()
 );
 
+create table if not exists data_deletion_requests (
+  id text primary key,
+  owner_id text not null references owners(id) on delete cascade,
+  requested_by_email text not null default '',
+  request_ip text not null default '',
+  status text not null default 'pending',
+  notes text not null default '',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint data_deletion_requests_status_check
+    check (status in ('pending', 'processing', 'completed', 'rejected'))
+);
+
 create table if not exists push_subscriptions (
   id text primary key,
   owner_id text not null references owners(id) on delete cascade,
@@ -161,6 +195,8 @@ create index if not exists idx_scan_events_owner_id on scan_events(owner_id);
 create index if not exists idx_notifications_owner_id on notifications(owner_id);
 create index if not exists idx_push_subscriptions_owner_id on push_subscriptions(owner_id);
 create index if not exists idx_push_subscriptions_active on push_subscriptions(active);
+create index if not exists idx_data_deletion_requests_owner_id on data_deletion_requests(owner_id);
+create index if not exists idx_data_deletion_requests_status on data_deletion_requests(status);
 
 alter table owners enable row level security;
 alter table pets enable row level security;
@@ -169,6 +205,7 @@ alter table nfc_tags enable row level security;
 alter table scan_events enable row level security;
 alter table notifications enable row level security;
 alter table push_subscriptions enable row level security;
+alter table data_deletion_requests enable row level security;
 
 -- Remove old policies if they exist
 DROP POLICY IF EXISTS "owners can read own profile" ON owners;
@@ -206,6 +243,8 @@ DROP POLICY IF EXISTS "push_subscriptions select own" ON push_subscriptions;
 DROP POLICY IF EXISTS "push_subscriptions insert own" ON push_subscriptions;
 DROP POLICY IF EXISTS "push_subscriptions update own" ON push_subscriptions;
 DROP POLICY IF EXISTS "push_subscriptions delete own" ON push_subscriptions;
+DROP POLICY IF EXISTS "data_deletion_requests select own" ON data_deletion_requests;
+DROP POLICY IF EXISTS "data_deletion_requests insert own" ON data_deletion_requests;
 
 -- Owners: each authenticated tutor can only access their own owner row.
 create policy "owners select own" on owners
@@ -370,6 +409,17 @@ create policy "push_subscriptions delete own" on push_subscriptions
   for delete
   to authenticated
   using (owner_id = auth.uid()::text);
+
+-- Data deletion requests: tutor can create and read own requests.
+create policy "data_deletion_requests select own" on data_deletion_requests
+  for select
+  to authenticated
+  using (owner_id = auth.uid()::text);
+
+create policy "data_deletion_requests insert own" on data_deletion_requests
+  for insert
+  to authenticated
+  with check (owner_id = auth.uid()::text);
 
 -- Storage bucket for uploads
 insert into storage.buckets (id, name, public)

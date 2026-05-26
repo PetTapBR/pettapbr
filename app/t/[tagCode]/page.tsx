@@ -18,6 +18,7 @@ interface PublicTagResponse {
   pet?: Pet | null;
   ownerName?: string;
   isPremiumPlan?: boolean;
+  profilePrivate?: boolean;
 }
 
 export default function PublicNfcTagPage() {
@@ -46,6 +47,7 @@ export default function PublicNfcTagPage() {
     pet: Pet | null;
     ownerName: string;
     isPremiumPlan: boolean;
+    profilePrivate: boolean;
   } | null>(null);
 
   const tagCode = normalizeTagCode(params.tagCode);
@@ -61,6 +63,7 @@ export default function PublicNfcTagPage() {
   const hasRemoteTagForCode = remoteTagResult?.code === tagCode;
   const remoteTag = hasRemoteTagForCode ? (remoteTagResult?.tag ?? null) : null;
   const tag = localTag ?? remoteTag;
+  const isProfilePrivate = Boolean(!localPet && hasRemoteTagForCode && remoteTagResult?.profilePrivate);
   const isTagResolved = !isReady ? false : Boolean(localTag) || hasRemoteTagForCode;
   const remotePet = hasRemoteTagForCode ? (remoteTagResult?.pet ?? null) : null;
   const pet = localPet ?? remotePet;
@@ -127,6 +130,7 @@ export default function PublicNfcTagPage() {
             pet: null,
             ownerName: "Tutor",
             isPremiumPlan: false,
+            profilePrivate: false,
           });
           return;
         }
@@ -148,6 +152,7 @@ export default function PublicNfcTagPage() {
           pet: payload.pet ?? null,
           ownerName: (payload.ownerName ?? "Tutor").trim() || "Tutor",
           isPremiumPlan: Boolean(payload.isPremiumPlan),
+          profilePrivate: Boolean(payload.profilePrivate),
         });
       } catch {
         if (!isMounted) {
@@ -160,6 +165,7 @@ export default function PublicNfcTagPage() {
           pet: null,
           ownerName: "Tutor",
           isPremiumPlan: false,
+          profilePrivate: false,
         });
       }
     }
@@ -317,6 +323,24 @@ export default function PublicNfcTagPage() {
         </div>
         <PetPublicProfile pet={pet} ownerName={ownerName} isPremiumPlan={isPremiumPlan} />
       </div>
+    );
+  }
+
+  if (tag && isProfilePrivate) {
+    return (
+      <section className="mx-auto w-full max-w-3xl rounded-3xl border border-white/10 bg-white/5 p-8 text-zinc-200 backdrop-blur">
+        <p className="text-xs uppercase tracking-[0.16em] text-zinc-400">Tag NFC ativa</p>
+        <h1 className="mt-2 text-3xl font-semibold tracking-tight text-white">Perfil privado</h1>
+        <p className="mt-3 text-sm text-zinc-300">
+          O tutor manteve este perfil privado para proteger dados sensiveis.
+        </p>
+        <Link
+          href="/"
+          className="mt-6 inline-flex rounded-full bg-white px-6 py-3 text-sm font-semibold uppercase tracking-[0.14em] text-zinc-950"
+        >
+          Ir para PetTapBR
+        </Link>
+      </section>
     );
   }
 

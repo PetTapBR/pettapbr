@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 
+import { PRIVACY_VERSION, TERMS_VERSION } from "@/lib/legal";
 import { consumeRateLimit } from "@/lib/rate-limit";
 import { getRequestIp } from "@/lib/request-security";
 import { createSupabaseServerClient, hasSupabaseServerClient } from "@/lib/supabase-server";
@@ -10,6 +11,9 @@ interface RegisterBody {
   email?: string;
   password?: string;
   activationCode?: string;
+  termsAccepted?: boolean;
+  privacyAccepted?: boolean;
+  lgpdAccepted?: boolean;
 }
 
 interface NfcTagLookupRow {
@@ -24,6 +28,15 @@ function normalizeActivationCode(value: string | undefined) {
 
 function isValidEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+function isMissingColumnError(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const candidate = error as { code?: unknown };
+  return candidate.code === "42703";
 }
 
 function createSupabaseAnonAuthClient() {
@@ -103,6 +116,8 @@ export async function POST(request: Request) {
   const email = (body.email ?? "").trim().toLowerCase();
   const password = body.password ?? "";
   const activationCode = normalizeActivationCode(body.activationCode);
+  const termsAccepted = body.termsAccepted === true || body.lgpdAccepted === true;
+  const privacyAccepted = body.privacyAccepted === true || body.lgpdAccepted === true;
 
   if (!fullName || !email || !password || !activationCode) {
     return NextResponse.json(
@@ -129,6 +144,16 @@ export async function POST(request: Request) {
       {
         ok: false,
         message: "Senha muito curta. Use ao menos 8 caracteres.",
+      },
+      { status: 400 },
+    );
+  }
+
+  if (!termsAccepted || !privacyAccepted) {
+    return NextResponse.json(
+      {
+        ok: false,
+        message: "Aceite os Termos de Uso e a Politica de Privacidade para concluir o cadastro.",
       },
       { status: 400 },
     );
@@ -234,6 +259,82 @@ export async function POST(request: Request) {
     }
   };
 
+  const rollbackOwnerRow = async () => {
+    try {
+      await supabase.from("owners").delete().eq("id", authUser.id);
+    } catch {
+      // Rollback best effort.
+    }
+  };
+
+  const ownerPayload = {
+    id: authUser.id,
+    full_name: fullName,
+    email,
+    password_hash: "__SUPABASE_AUTH__",
+    created_at: authUser.created_at ?? nowIso,
+    terms_accepted_at: nowIso,
+    terms_accepted_version: TERMS_VERSION,
+    terms_accepted_ip: requestIp,
+    privacy_accepted_at: nowIso,
+    privacy_accepted_version: PRIVACY_VERSION,
+    privacy_accepted_ip: requestIp,
+    lgpd_consent_at: nowIso,
+    lgpd_consent_version: PRIVACY_VERSION,
+    lgpd_consent_ip: requestIp,
+  };
+
+  let ownerError: { message?: string; code?: string } | null = null;
+
+  {
+    const ownerResult = await supabase.from("owners").upsert(ownerPayload, { onConflict: "id" });
+    ownerError = ownerResult.error;
+  }
+
+  if (ownerError && isMissingColumnError(ownerError)) {
+    const legacyPayload = {
+      id: authUser.id,
+      full_name: fullName,
+      email,
+      password_hash: "__SUPABASE_AUTH__",
+      created_at: authUser.created_at ?? nowIso,
+      lgpd_consent_at: nowIso,
+      lgpd_consent_version: PRIVACY_VERSION,
+      lgpd_consent_ip: requestIp,
+    };
+
+    const legacyResult = await supabase.from("owners").upsert(legacyPayload, {
+      onConflict: "id",
+    });
+    ownerError = legacyResult.error;
+  }
+
+  if (ownerError && isMissingColumnError(ownerError)) {
+    const fallbackResult = await supabase.from("owners").upsert(
+      {
+        id: authUser.id,
+        full_name: fullName,
+        email,
+        password_hash: "__SUPABASE_AUTH__",
+        created_at: authUser.created_at ?? nowIso,
+      },
+      { onConflict: "id" },
+    );
+    ownerError = fallbackResult.error;
+  }
+
+  if (ownerError) {
+    await rollbackOwnerRow();
+    await rollbackAuthUser();
+    return NextResponse.json(
+      {
+        ok: false,
+        message: ownerError.message || "Falha ao salvar perfil do tutor.",
+      },
+      { status: 500 },
+    );
+  }
+
   const { data: claimedRows, error: claimError } = await supabase
     .from("nfc_tags")
     .update({
@@ -246,6 +347,7 @@ export async function POST(request: Request) {
     .limit(1);
 
   if (claimError) {
+    await rollbackOwnerRow();
     await rollbackAuthUser();
     return NextResponse.json(
       {
@@ -257,6 +359,7 @@ export async function POST(request: Request) {
   }
 
   if (!claimedRows || claimedRows.length === 0) {
+    await rollbackOwnerRow();
     await rollbackAuthUser();
     return NextResponse.json(
       {
@@ -264,29 +367,6 @@ export async function POST(request: Request) {
         message: "Esta chave de ativacao acabou de ser usada por outra conta.",
       },
       { status: 409 },
-    );
-  }
-
-  const { error: ownerError } = await supabase.from("owners").upsert(
-    {
-      id: authUser.id,
-      full_name: fullName,
-      email,
-      password_hash: "__SUPABASE_AUTH__",
-      created_at: authUser.created_at ?? nowIso,
-    },
-    { onConflict: "id" },
-  );
-
-  if (ownerError) {
-    await supabase.from("nfc_tags").update({ owner_id: null, updated_at: nowIso }).eq("id", selectedTag.id);
-    await rollbackAuthUser();
-    return NextResponse.json(
-      {
-        ok: false,
-        message: ownerError.message || "Falha ao salvar perfil do tutor.",
-      },
-      { status: 500 },
     );
   }
 

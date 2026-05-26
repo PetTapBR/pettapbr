@@ -119,6 +119,8 @@ function normalizeState(parsed: AppState): AppState {
         locationLng: lng ?? null,
         locationLabel: pet.locationLabel ?? "",
         locationUrl: pet.locationUrl || buildGoogleMapsUrl(lat ?? null, lng ?? null),
+        isPublicProfile:
+          typeof pet.isPublicProfile === "boolean" ? pet.isPublicProfile : true,
       };
     }),
   };

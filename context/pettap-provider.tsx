@@ -38,6 +38,11 @@ interface AuthResult {
   requiresEmailConfirmation?: boolean;
 }
 
+interface RegisterConsentPayload {
+  termsAccepted: boolean;
+  privacyAccepted: boolean;
+}
+
 interface LostPetAlertResponse {
   ok: boolean;
   notificationsSent?: number;
@@ -78,7 +83,13 @@ interface PetTapContextValue {
   unreadNotifications: AccessNotification[];
   ownerScanEvents: ScanEvent[];
   login: (email: string, password: string) => Promise<AuthResult>;
-  register: (fullName: string, email: string, password: string, activationCode: string) => Promise<AuthResult>;
+  register: (
+    fullName: string,
+    email: string,
+    password: string,
+    activationCode: string,
+    consent: RegisterConsentPayload,
+  ) => Promise<AuthResult>;
   logout: () => void;
   refreshCurrentOwner: () => Promise<void>;
   addPet: (payload: PetFormSubmission) => Promise<{ ok: boolean; petId?: string; message?: string }>;
@@ -170,6 +181,7 @@ interface PetRow {
   location_label: string;
   reward: string;
   status: "safe" | "lost" | "found";
+  is_public: boolean | null;
   allergies: string;
   medications: string;
   vaccines: string;
@@ -262,6 +274,7 @@ function mapPetRow(row: PetRow, mediaRows: PetMediaRow[]): Pet {
     locationLabel: row.location_label,
     reward: row.reward,
     status: row.status,
+    isPublicProfile: row.is_public !== false,
     medical: {
       allergies: row.allergies,
       medications: row.medications,
@@ -336,6 +349,7 @@ function sanitizePetValuesByPlan(owner: Owner, payload: PetFormSubmission) {
       locationLabel: "",
       reward: "",
       status: "safe" as const,
+      isPublicProfile: payload.values.isPublicProfile,
       allergies: "",
       medications: "",
       vaccines: "",
@@ -373,22 +387,40 @@ async function fetchPetsByOwnerFromSupabase(ownerId: string) {
     return null as Pet[] | null;
   }
 
-  const { data: petRows, error: petError } = await supabase
-    .from("pets")
-    .select(
-      "id, owner_id, slug, name, bio, age, breed, weight, city, avatar_url, whatsapp, phone, location_url, location_lat, location_lng, location_label, reward, status, allergies, medications, vaccines, created_at, updated_at",
-    )
-    .eq("owner_id", ownerId);
+  const primaryColumns =
+    "id, owner_id, slug, name, bio, age, breed, weight, city, avatar_url, whatsapp, phone, location_url, location_lat, location_lng, location_label, reward, status, is_public, allergies, medications, vaccines, created_at, updated_at";
+  const fallbackColumns =
+    "id, owner_id, slug, name, bio, age, breed, weight, city, avatar_url, whatsapp, phone, location_url, location_lat, location_lng, location_label, reward, status, allergies, medications, vaccines, created_at, updated_at";
 
-  if (petError || !petRows) {
-    return null as Pet[] | null;
+  let petRows: PetRow[] | null = null;
+  const primaryQuery = await supabase.from("pets").select(primaryColumns).eq("owner_id", ownerId);
+
+  if (primaryQuery.error) {
+    const errorMessage = primaryQuery.error.message.toLowerCase();
+    const missingVisibilityColumn =
+      errorMessage.includes("is_public") && errorMessage.includes("does not exist");
+    if (!missingVisibilityColumn) {
+      return null as Pet[] | null;
+    }
+
+    const fallbackQuery = await supabase.from("pets").select(fallbackColumns).eq("owner_id", ownerId);
+    if (fallbackQuery.error || !fallbackQuery.data) {
+      return null as Pet[] | null;
+    }
+
+    petRows = (fallbackQuery.data as PetRow[]).map((row) => ({
+      ...row,
+      is_public: true,
+    }));
+  } else {
+    petRows = (primaryQuery.data ?? []) as PetRow[];
   }
 
-  if (petRows.length === 0) {
+  if (!petRows || petRows.length === 0) {
     return [] as Pet[];
   }
 
-  const petIds = petRows.map((row) => (row as PetRow).id);
+  const petIds = petRows.map((row) => row.id);
 
   let mediaRows: PetMediaRow[] = [];
   if (petIds.length > 0) {
@@ -402,7 +434,7 @@ async function fetchPetsByOwnerFromSupabase(ownerId: string) {
     }
   }
 
-  return (petRows as PetRow[]).map((row) =>
+  return petRows.map((row) =>
     mapPetRow(
       row,
       mediaRows.filter((mediaRow) => mediaRow.pet_id === row.id),
@@ -528,7 +560,7 @@ async function syncPetWithSupabase(pet: Pet) {
     return;
   }
 
-  const { error: petError } = await supabase.from("pets").upsert(
+  let petResult = await supabase.from("pets").upsert(
     {
       id: pet.id,
       owner_id: pet.ownerId,
@@ -548,6 +580,7 @@ async function syncPetWithSupabase(pet: Pet) {
       location_label: pet.locationLabel,
       reward: pet.reward,
       status: pet.status,
+      is_public: pet.isPublicProfile,
       allergies: pet.medical.allergies,
       medications: pet.medical.medications,
       vaccines: pet.medical.vaccines,
@@ -559,8 +592,47 @@ async function syncPetWithSupabase(pet: Pet) {
     },
   );
 
-  if (petError) {
-    throw new Error(petError.message);
+  if (petResult.error) {
+    const message = petResult.error.message.toLowerCase();
+    const missingVisibilityColumn =
+      message.includes("is_public") && message.includes("does not exist");
+
+    if (missingVisibilityColumn) {
+      petResult = await supabase.from("pets").upsert(
+        {
+          id: pet.id,
+          owner_id: pet.ownerId,
+          slug: pet.slug,
+          name: pet.name,
+          bio: pet.bio,
+          age: pet.age,
+          breed: pet.breed,
+          weight: pet.weight,
+          city: pet.city,
+          avatar_url: pet.avatarUrl,
+          whatsapp: pet.whatsapp,
+          phone: pet.phone,
+          location_url: pet.locationUrl,
+          location_lat: pet.locationLat,
+          location_lng: pet.locationLng,
+          location_label: pet.locationLabel,
+          reward: pet.reward,
+          status: pet.status,
+          allergies: pet.medical.allergies,
+          medications: pet.medical.medications,
+          vaccines: pet.medical.vaccines,
+          created_at: pet.createdAt,
+          updated_at: pet.updatedAt,
+        },
+        {
+          onConflict: "id",
+        },
+      );
+    }
+  }
+
+  if (petResult.error) {
+    throw new Error(petResult.error.message);
   }
 
   const { error: deleteMediaError } = await supabase.from("pet_media").delete().eq("pet_id", pet.id);
@@ -584,6 +656,18 @@ async function syncPetWithSupabase(pet: Pet) {
       throw new Error(mediaError.message);
     }
   }
+}
+
+function shouldDefaultPetAsPrivate(values: PetFormSubmission["values"]) {
+  return Boolean(values.phone.trim()) || Boolean(values.locationLabel.trim());
+}
+
+function resolvePetPublicVisibility(values: PetFormSubmission["values"]) {
+  if (shouldDefaultPetAsPrivate(values) && !values.isPublicProfile) {
+    return false;
+  }
+
+  return values.isPublicProfile;
 }
 
 function usePetTapValue() {
@@ -1020,6 +1104,7 @@ function usePetTapValue() {
       email: string,
       password: string,
       activationCodeInput: string,
+      consent: RegisterConsentPayload,
     ): Promise<AuthResult> => {
       const normalized = email.trim().toLowerCase();
       const activationCode = normalizeActivationCode(activationCodeInput);
@@ -1050,6 +1135,8 @@ function usePetTapValue() {
             email: normalized,
             password,
             activationCode,
+            termsAccepted: consent.termsAccepted,
+            privacyAccepted: consent.privacyAccepted,
           }),
         });
 
@@ -1325,6 +1412,7 @@ function usePetTapValue() {
           locationLabel: normalizedPayload.values.locationLabel.trim(),
           reward: normalizedPayload.values.reward.trim(),
           status: normalizedPayload.values.status,
+          isPublicProfile: resolvePetPublicVisibility(normalizedPayload.values),
           medical: {
             allergies: normalizedPayload.values.allergies.trim(),
             medications: normalizedPayload.values.medications.trim(),
@@ -1483,6 +1571,7 @@ function usePetTapValue() {
           locationLabel: normalizedPayload.values.locationLabel.trim(),
           reward: normalizedPayload.values.reward.trim(),
           status: normalizedPayload.values.status,
+          isPublicProfile: resolvePetPublicVisibility(normalizedPayload.values),
           medical: {
             allergies: normalizedPayload.values.allergies.trim(),
             medications: normalizedPayload.values.medications.trim(),

@@ -31,6 +31,7 @@ interface PetRow {
   location_label: string;
   reward: string;
   status: "safe" | "lost" | "found";
+  is_public: boolean | null;
   allergies: string;
   medications: string;
   vaccines: string;
@@ -134,19 +135,48 @@ export async function GET(request: Request) {
   let pet: PetRow | null = null;
   let mediaRows: PetMediaRow[] = [];
   let owner: OwnerRow | null = null;
+  let profilePrivate = false;
 
   if (tagRow.pet_id && tagRow.status === "active") {
-    const petColumns =
+    const petColumnsPrimary =
+      "id, owner_id, slug, name, bio, age, breed, weight, city, avatar_url, whatsapp, phone, location_url, location_lat, location_lng, location_label, reward, status, is_public, allergies, medications, vaccines, created_at, updated_at";
+    const petColumnsFallback =
       "id, owner_id, slug, name, bio, age, breed, weight, city, avatar_url, whatsapp, phone, location_url, location_lat, location_lng, location_label, reward, status, allergies, medications, vaccines, created_at, updated_at";
 
-    const [{ data: petRows, error: petError }, { data: petMediaRows, error: mediaError }] =
+    const [{ data: petRowsPrimary, error: petPrimaryError }, { data: petMediaRows, error: mediaError }] =
       await Promise.all([
-        supabase.from("pets").select(petColumns).eq("id", tagRow.pet_id).limit(1),
+        supabase.from("pets").select(petColumnsPrimary).eq("id", tagRow.pet_id).limit(1),
         supabase
           .from("pet_media")
           .select("id, pet_id, media_type, url, caption")
           .eq("pet_id", tagRow.pet_id),
       ]);
+
+    let petRows = petRowsPrimary as PetRow[] | null;
+    let petError = petPrimaryError;
+    if (petPrimaryError) {
+      const errorMessage = petPrimaryError.message.toLowerCase();
+      const missingVisibilityColumn =
+        errorMessage.includes("is_public") && errorMessage.includes("does not exist");
+
+      if (missingVisibilityColumn) {
+        const fallbackById = await supabase
+          .from("pets")
+          .select(petColumnsFallback)
+          .eq("id", tagRow.pet_id)
+          .limit(1);
+
+        if (fallbackById.error) {
+          petError = fallbackById.error;
+        } else {
+          petError = null;
+          petRows = ((fallbackById.data ?? []) as PetRow[]).map((row) => ({
+            ...row,
+            is_public: true,
+          }));
+        }
+      }
+    }
 
     if (petError || mediaError) {
       return NextResponse.json(
@@ -160,8 +190,14 @@ export async function GET(request: Request) {
 
     pet = (petRows?.[0] ?? null) as PetRow | null;
     mediaRows = (petMediaRows ?? []) as PetMediaRow[];
+    profilePrivate = pet?.is_public === false;
 
-    if (pet) {
+    if (profilePrivate) {
+      pet = null;
+      mediaRows = [];
+    }
+
+    if (pet && !profilePrivate) {
       const { data: ownerRows } = await supabase
         .from("owners")
         .select("id, full_name, plan_tier, plan_status")
@@ -181,6 +217,7 @@ export async function GET(request: Request) {
       petId: tagRow.pet_id,
       status: tagRow.status,
     },
+    profilePrivate,
     ownerName: owner?.full_name || "Tutor",
     isPremiumPlan: owner?.plan_tier === "pro" && owner?.plan_status !== "inactive",
     pet: pet
@@ -203,6 +240,7 @@ export async function GET(request: Request) {
           locationLabel: pet.location_label,
           reward: pet.reward,
           status: pet.status,
+          isPublicProfile: pet.is_public ?? true,
           medical: {
             allergies: pet.allergies,
             medications: pet.medications,

@@ -202,6 +202,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <footer className="relative z-10 border-t border-white/10 bg-zinc-950/70">
         <div className="mx-auto flex w-full max-w-6xl flex-col gap-1 px-4 py-4 text-center text-xs text-zinc-400 sm:px-6 sm:text-left">
           <p className="uppercase tracking-[0.14em] text-zinc-300">PetTapBR&reg;</p>
+          <div className="flex flex-wrap items-center justify-center gap-3 sm:justify-start">
+            <Link
+              href="/privacy"
+              className="text-zinc-400 transition hover:text-cyan-200"
+            >
+              Politica de Privacidade
+            </Link>
+            <span className="text-zinc-600">|</span>
+            <Link
+              href="/terms"
+              className="text-zinc-400 transition hover:text-cyan-200"
+            >
+              Termos de Uso
+            </Link>
+          </div>
           <p>© {new Date().getFullYear()} PetTapBR. Todos os direitos reservados.</p>
         </div>
       </footer>

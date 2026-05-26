@@ -22,6 +22,7 @@ interface PetLookupRow {
   owner_id: string;
   slug: string;
   name: string;
+  is_public: boolean | null;
 }
 
 function normalizeText(value: string | undefined) {
@@ -154,11 +155,41 @@ export async function POST(request: Request) {
       );
     }
 
-    const { data: petRows, error: petError } = await supabase
+    const petColumnsPrimary = "id, owner_id, slug, name, is_public";
+    const petColumnsFallback = "id, owner_id, slug, name";
+
+    const primaryPet = await supabase
       .from("pets")
-      .select("id, owner_id, slug, name")
+      .select(petColumnsPrimary)
       .eq("id", tagRow.pet_id)
       .limit(1);
+
+    let petRows = primaryPet.data as PetLookupRow[] | null;
+    let petError = primaryPet.error;
+
+    if (primaryPet.error) {
+      const errorMessage = primaryPet.error.message.toLowerCase();
+      const missingVisibilityColumn =
+        errorMessage.includes("is_public") && errorMessage.includes("does not exist");
+
+      if (missingVisibilityColumn) {
+        const fallbackPet = await supabase
+          .from("pets")
+          .select(petColumnsFallback)
+          .eq("id", tagRow.pet_id)
+          .limit(1);
+
+        if (fallbackPet.error) {
+          petError = fallbackPet.error;
+        } else {
+          petError = null;
+          petRows = ((fallbackPet.data ?? []) as PetLookupRow[]).map((row) => ({
+            ...row,
+            is_public: true,
+          }));
+        }
+      }
+    }
 
     if (petError) {
       return NextResponse.json(
@@ -172,11 +203,39 @@ export async function POST(request: Request) {
 
     pet = (petRows?.[0] ?? null) as PetLookupRow | null;
   } else {
-    const { data: petRowsBySlug, error: petBySlugError } = await supabase
+    const petColumnsPrimary = "id, owner_id, slug, name, is_public";
+    const petColumnsFallback = "id, owner_id, slug, name";
+
+    const primaryBySlug = await supabase
       .from("pets")
-      .select("id, owner_id, slug, name")
+      .select(petColumnsPrimary)
       .eq("slug", slug)
       .limit(1);
+
+    let petRowsBySlug = primaryBySlug.data as PetLookupRow[] | null;
+    let petBySlugError = primaryBySlug.error;
+
+    if (primaryBySlug.error) {
+      const errorMessage = primaryBySlug.error.message.toLowerCase();
+      const missingVisibilityColumn =
+        errorMessage.includes("is_public") && errorMessage.includes("does not exist");
+      if (missingVisibilityColumn) {
+        const fallbackBySlug = await supabase
+          .from("pets")
+          .select(petColumnsFallback)
+          .eq("slug", slug)
+          .limit(1);
+        if (fallbackBySlug.error) {
+          petBySlugError = fallbackBySlug.error;
+        } else {
+          petBySlugError = null;
+          petRowsBySlug = ((fallbackBySlug.data ?? []) as PetLookupRow[]).map((row) => ({
+            ...row,
+            is_public: true,
+          }));
+        }
+      }
+    }
 
     if (petBySlugError) {
       return NextResponse.json(
@@ -191,11 +250,36 @@ export async function POST(request: Request) {
     pet = (petRowsBySlug?.[0] ?? null) as PetLookupRow | null;
 
     if (!pet && slug) {
-      const { data: petRowsById, error: petByIdError } = await supabase
+      const primaryById = await supabase
         .from("pets")
-        .select("id, owner_id, slug, name")
+        .select(petColumnsPrimary)
         .eq("id", slug)
         .limit(1);
+
+      let petRowsById = primaryById.data as PetLookupRow[] | null;
+      let petByIdError = primaryById.error;
+
+      if (primaryById.error) {
+        const errorMessage = primaryById.error.message.toLowerCase();
+        const missingVisibilityColumn =
+          errorMessage.includes("is_public") && errorMessage.includes("does not exist");
+        if (missingVisibilityColumn) {
+          const fallbackById = await supabase
+            .from("pets")
+            .select(petColumnsFallback)
+            .eq("id", slug)
+            .limit(1);
+          if (fallbackById.error) {
+            petByIdError = fallbackById.error;
+          } else {
+            petByIdError = null;
+            petRowsById = ((fallbackById.data ?? []) as PetLookupRow[]).map((row) => ({
+              ...row,
+              is_public: true,
+            }));
+          }
+        }
+      }
 
       if (petByIdError) {
         return NextResponse.json(
@@ -218,6 +302,16 @@ export async function POST(request: Request) {
         message: "Pet nao encontrado.",
       },
       { status: 404 },
+    );
+  }
+
+  if (pet.is_public === false) {
+    return NextResponse.json(
+      {
+        ok: false,
+        message: "Perfil do pet esta privado pelo tutor.",
+      },
+      { status: 403 },
     );
   }
 

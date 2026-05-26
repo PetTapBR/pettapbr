@@ -24,6 +24,7 @@ interface PublicPetResponse {
   pet?: Pet | null;
   ownerName?: string;
   isPremiumPlan?: boolean;
+  profilePrivate?: boolean;
 }
 
 export default function PublicPetPage() {
@@ -43,6 +44,7 @@ export default function PublicPetPage() {
     pet: Pet | null;
     ownerName: string;
     isPremiumPlan: boolean;
+    profilePrivate: boolean;
   } | null>(null);
   const location = manualLocation ?? detectedLocation;
   const locationReady = manualLocation ? true : detectedLocationReady;
@@ -51,6 +53,7 @@ export default function PublicPetPage() {
   const hasRemotePetForSlug = remotePetResult?.slug === slug;
   const remotePet = hasRemotePetForSlug ? (remotePetResult?.pet ?? null) : null;
   const pet = localPet ?? remotePet;
+  const isProfilePrivate = Boolean(!localPet && hasRemotePetForSlug && remotePetResult?.profilePrivate);
   const isPetResolved = !isReady ? false : Boolean(localPet) || hasRemotePetForSlug;
   const localOwner = pet?.ownerId ? (state.owners.find((owner) => owner.id === pet.ownerId) ?? null) : null;
   const localOwnerName = localOwner?.fullName ?? "";
@@ -88,6 +91,7 @@ export default function PublicPetPage() {
             pet: null,
             ownerName: "Tutor",
             isPremiumPlan: false,
+            profilePrivate: false,
           });
           return;
         }
@@ -97,6 +101,7 @@ export default function PublicPetPage() {
           pet: payload.pet ?? null,
           ownerName: (payload.ownerName ?? "Tutor").trim() || "Tutor",
           isPremiumPlan: Boolean(payload.isPremiumPlan),
+          profilePrivate: Boolean(payload.profilePrivate),
         });
       } catch {
         if (!isMounted) {
@@ -108,6 +113,7 @@ export default function PublicPetPage() {
           pet: null,
           ownerName: "Tutor",
           isPremiumPlan: false,
+          profilePrivate: false,
         });
       }
     }
@@ -207,8 +213,14 @@ export default function PublicPetPage() {
   if (!pet) {
     return (
       <section className="mx-auto w-full max-w-3xl rounded-3xl border border-white/10 bg-white/5 p-8 text-center text-zinc-200">
-        <h1 className="text-3xl font-semibold text-white">Perfil nao encontrado</h1>
-        <p className="mt-3 text-sm text-zinc-400">Este link publico nao esta vinculado a um pet valido.</p>
+        <h1 className="text-3xl font-semibold text-white">
+          {isProfilePrivate ? "Perfil privado" : "Perfil nao encontrado"}
+        </h1>
+        <p className="mt-3 text-sm text-zinc-400">
+          {isProfilePrivate
+            ? "Este tutor manteve o perfil privado para proteger dados sensiveis."
+            : "Este link publico nao esta vinculado a um pet valido."}
+        </p>
         <Link
           href="/"
           className="mt-5 inline-flex rounded-full bg-white px-6 py-3 text-sm font-semibold uppercase tracking-[0.14em] text-zinc-950"

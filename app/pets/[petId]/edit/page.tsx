@@ -24,6 +24,7 @@ function mapPetToFormValues(pet: Pet): PetFormValues {
     locationLabel: pet.locationLabel,
     reward: pet.reward,
     status: pet.status,
+    isPublicProfile: pet.isPublicProfile,
     allergies: pet.medical.allergies,
     medications: pet.medical.medications,
     vaccines: pet.medical.vaccines,

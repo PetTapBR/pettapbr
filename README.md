@@ -42,9 +42,18 @@ PETTAPBR_ADMIN_SECRET=troque-esse-segredo
 ASAAS_API_KEY=...
 ASAAS_BASE_URL=https://api.asaas.com/v3
 ASAAS_WEBHOOK_TOKEN=seu-token-forte-do-webhook
+PRIVACY_CONTACT_EMAIL=privacidade@pettapbr.com
 ```
 
 Sem essas variaveis, o sistema bloqueia cadastro/salvamento de pets e uploads.
+
+## Patch LGPD
+
+Execute tambem o patch LGPD:
+
+1. Abra o SQL Editor do Supabase.
+2. Abra o arquivo [supabase/lgpd_patch.sql](supabase/lgpd_patch.sql).
+3. Copie e execute o conteudo.
 
 ## Assinatura Pro (Asaas Real)
 
@@ -103,3 +112,8 @@ npm start
 ## Dados iniciais
 
 O projeto inicia sem perfis de teste. Crie sua conta e cadastre seus pets pelo fluxo real de producao.
+
+## Operacao em Producao
+
+- Checklist de Go Live: [docs/go-live-checklist.md](docs/go-live-checklist.md)
+- Guia LGPD operacional: [docs/lgpd-operacao.md](docs/lgpd-operacao.md)

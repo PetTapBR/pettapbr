@@ -23,6 +23,7 @@ interface PetRow {
   location_label: string;
   reward: string;
   status: "safe" | "lost" | "found";
+  is_public: boolean | null;
   allergies: string;
   medications: string;
   vaccines: string;
@@ -105,15 +106,40 @@ export async function GET(request: Request) {
   }
 
   const supabase = createSupabaseServerClient();
-  const petColumns =
+  const petColumnsPrimary =
+    "id, owner_id, slug, name, bio, age, breed, weight, city, avatar_url, whatsapp, phone, location_url, location_lat, location_lng, location_label, reward, status, is_public, allergies, medications, vaccines, created_at, updated_at";
+  const petColumnsFallback =
     "id, owner_id, slug, name, bio, age, breed, weight, city, avatar_url, whatsapp, phone, location_url, location_lat, location_lng, location_label, reward, status, allergies, medications, vaccines, created_at, updated_at";
 
   let petRow: PetRow | null = null;
-  const { data: petBySlugRows, error: petBySlugError } = await supabase
-    .from("pets")
-    .select(petColumns)
-    .eq("slug", slug)
-    .limit(1);
+  let petBySlugRows: PetRow[] | null = null;
+  let petBySlugError: { message?: string } | null = null;
+
+  const primaryBySlug = await supabase.from("pets").select(petColumnsPrimary).eq("slug", slug).limit(1);
+  if (primaryBySlug.error) {
+    const errorMessage = primaryBySlug.error.message.toLowerCase();
+    const missingVisibilityColumn =
+      errorMessage.includes("is_public") && errorMessage.includes("does not exist");
+    if (!missingVisibilityColumn) {
+      petBySlugError = primaryBySlug.error;
+    } else {
+      const fallbackBySlug = await supabase
+        .from("pets")
+        .select(petColumnsFallback)
+        .eq("slug", slug)
+        .limit(1);
+      if (fallbackBySlug.error) {
+        petBySlugError = fallbackBySlug.error;
+      } else {
+        petBySlugRows = ((fallbackBySlug.data ?? []) as PetRow[]).map((row) => ({
+          ...row,
+          is_public: true,
+        }));
+      }
+    }
+  } else {
+    petBySlugRows = (primaryBySlug.data ?? []) as PetRow[];
+  }
 
   if (petBySlugError) {
     return NextResponse.json(
@@ -128,11 +154,34 @@ export async function GET(request: Request) {
   petRow = (petBySlugRows?.[0] ?? null) as PetRow | null;
 
   if (!petRow) {
-    const { data: petByIdRows, error: petByIdError } = await supabase
-      .from("pets")
-      .select(petColumns)
-      .eq("id", slug)
-      .limit(1);
+    let petByIdRows: PetRow[] | null = null;
+    let petByIdError: { message?: string } | null = null;
+
+    const primaryById = await supabase.from("pets").select(petColumnsPrimary).eq("id", slug).limit(1);
+    if (primaryById.error) {
+      const errorMessage = primaryById.error.message.toLowerCase();
+      const missingVisibilityColumn =
+        errorMessage.includes("is_public") && errorMessage.includes("does not exist");
+      if (!missingVisibilityColumn) {
+        petByIdError = primaryById.error;
+      } else {
+        const fallbackById = await supabase
+          .from("pets")
+          .select(petColumnsFallback)
+          .eq("id", slug)
+          .limit(1);
+        if (fallbackById.error) {
+          petByIdError = fallbackById.error;
+        } else {
+          petByIdRows = ((fallbackById.data ?? []) as PetRow[]).map((row) => ({
+            ...row,
+            is_public: true,
+          }));
+        }
+      }
+    } else {
+      petByIdRows = (primaryById.data ?? []) as PetRow[];
+    }
 
     if (petByIdError) {
       return NextResponse.json(
@@ -149,6 +198,14 @@ export async function GET(request: Request) {
 
   if (!petRow) {
     return NextResponse.json({ ok: true, pet: null });
+  }
+
+  if (petRow.is_public === false) {
+    return NextResponse.json({
+      ok: true,
+      pet: null,
+      profilePrivate: true,
+    });
   }
 
   const [{ data: mediaRows }, { data: ownerRows }] = await Promise.all([
@@ -189,6 +246,7 @@ export async function GET(request: Request) {
       locationLabel: petRow.location_label,
       reward: petRow.reward,
       status: petRow.status,
+      isPublicProfile: petRow.is_public ?? true,
       medical: {
         allergies: petRow.allergies,
         medications: petRow.medications,

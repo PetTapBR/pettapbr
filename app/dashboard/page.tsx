@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { PushNotificationCard } from "@/components/push-notification-card";
 import { StatusPill } from "@/components/status-pill";
 import { usePetTap } from "@/context/pettap-provider";
+import { authFetch } from "@/lib/auth-client";
 import { isOwnerPro } from "@/lib/owner-defaults";
 import { formatDateTime, normalizeTagCode } from "@/lib/utils";
 
@@ -38,6 +39,8 @@ export default function DashboardPage() {
     code: string;
   } | null>(null);
   const [nfcLinkError, setNfcLinkError] = useState("");
+  const [privacyFeedback, setPrivacyFeedback] = useState("");
+  const [isSubmittingDeleteRequest, setIsSubmittingDeleteRequest] = useState(false);
 
   useEffect(() => {
     if (isReady && !currentOwner) {
@@ -99,6 +102,39 @@ export default function DashboardPage() {
     await handleStatusChange(lostModeModal.petId, "lost", lostModeModal.reward);
     setIsLostModeSubmitting(false);
     setLostModeModal(null);
+  }
+
+  async function handleRequestDataDeletion() {
+    setPrivacyFeedback("");
+    setIsSubmittingDeleteRequest(true);
+
+    try {
+      const response = await authFetch("/api/privacy/delete-request", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({}),
+      });
+
+      const payload = (await response.json()) as {
+        ok?: boolean;
+        message?: string;
+      };
+
+      if (!response.ok || !payload.ok) {
+        setPrivacyFeedback(payload.message ?? "Nao foi possivel registrar sua solicitacao agora.");
+        return;
+      }
+
+      setPrivacyFeedback(
+        payload.message ?? "Solicitacao enviada com sucesso. Voce recebera retorno por e-mail.",
+      );
+    } catch {
+      setPrivacyFeedback("Falha de conexao ao enviar solicitacao de exclusao.");
+    } finally {
+      setIsSubmittingDeleteRequest(false);
+    }
   }
 
   return (
@@ -177,6 +213,28 @@ export default function DashboardPage() {
           {statusFeedback}
         </section>
       ) : null}
+
+      <section className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-zinc-200">
+        <p className="text-xs uppercase tracking-[0.14em] text-zinc-400">Privacidade LGPD</p>
+        <p className="mt-2 text-zinc-300">
+          Se desejar encerrar a conta, voce pode solicitar a exclusao dos seus dados pessoais.
+        </p>
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={() => {
+              void handleRequestDataDeletion();
+            }}
+            disabled={isSubmittingDeleteRequest}
+            className="rounded-full border border-rose-300/40 bg-rose-500/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-rose-100 transition hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            {isSubmittingDeleteRequest
+              ? "Enviando..."
+              : "Solicitar exclusao dos meus dados"}
+          </button>
+          {privacyFeedback ? <p className="text-xs text-zinc-300">{privacyFeedback}</p> : null}
+        </div>
+      </section>
 
       <section className="min-w-0 w-full max-w-full rounded-3xl border border-white/10 bg-white/5 p-5 backdrop-blur sm:p-6">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">

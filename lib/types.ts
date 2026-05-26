@@ -72,6 +72,7 @@ export interface Pet {
   locationLabel: string;
   reward: string;
   status: PetStatus;
+  isPublicProfile: boolean;
   medical: PetMedicalInfo;
   gallery: PetMedia[];
   createdAt: string;
@@ -131,6 +132,7 @@ export interface PetFormValues {
   locationLabel: string;
   reward: string;
   status: PetStatus;
+  isPublicProfile: boolean;
   allergies: string;
   medications: string;
   vaccines: string;
