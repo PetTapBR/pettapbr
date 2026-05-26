@@ -35,8 +35,15 @@ function isMissingColumnError(error: unknown) {
     return false;
   }
 
-  const candidate = error as { code?: unknown };
-  return candidate.code === "42703";
+  const candidate = error as { code?: unknown; message?: unknown };
+  const code = typeof candidate.code === "string" ? candidate.code : "";
+  const message = typeof candidate.message === "string" ? candidate.message.toLowerCase() : "";
+
+  if (code === "42703" || code === "PGRST204") {
+    return true;
+  }
+
+  return message.includes("column") && message.includes("schema cache");
 }
 
 function createSupabaseAnonAuthClient() {
