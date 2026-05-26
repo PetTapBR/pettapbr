@@ -42,7 +42,6 @@ PETTAPBR_ADMIN_SECRET=troque-esse-segredo
 ASAAS_API_KEY=...
 ASAAS_BASE_URL=https://api.asaas.com/v3
 ASAAS_WEBHOOK_TOKEN=seu-token-forte-do-webhook
-ASAAS_PRO_MONTHLY_PRICE=7.90
 ```
 
 Sem essas variaveis, o sistema bloqueia cadastro/salvamento de pets e uploads.
@@ -62,6 +61,11 @@ Sem essas variaveis, o sistema bloqueia cadastro/salvamento de pets e uploads.
    - `SUBSCRIPTION_DELETED`
 6. No app, acesse `/plans`, informe CPF/CNPJ, gere a cobranca e conclua o pagamento.
 7. A renovacao do plano sera aplicada automaticamente pelo webhook quando o pagamento for confirmado.
+8. Ciclos e valores atuais do Plano Pro:
+   - Mensal: R$ 9,90
+   - Trimestral: R$ 27,90
+   - Semestral: R$ 52,90
+   - Anual: R$ 99,00
 
 ## Fluxo NFC
 

@@ -1,12 +1,20 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
 
 import { usePetTap } from "@/context/pettap-provider";
 import { authFetch } from "@/lib/auth-client";
 import { reverseGeocodeLabel } from "@/lib/geocode-client";
 import { isOwnerPro } from "@/lib/owner-defaults";
+import {
+  formatBrl,
+  getProPlanChargeValue,
+  getProPlanCycleLabel,
+  getProPlanMonthlyEquivalent,
+  PRO_PLAN_CYCLES,
+  type ProPlanCycleMonths,
+} from "@/lib/pro-plan-pricing";
 
 type AsaasBillingType = "BOLETO" | "CREDIT_CARD" | "PIX";
 
@@ -69,10 +77,7 @@ const BILLING_OPTIONS: Array<{ value: AsaasBillingType; label: string }> = [
   { value: "CREDIT_CARD", label: "CARTAO" },
 ];
 
-const RENEWAL_OPTIONS = [1, 3, 6, 12] as const;
-
 export default function PlansPage() {
-  const router = useRouter();
   const {
     isReady,
     currentOwner,
@@ -92,7 +97,7 @@ export default function PlansPage() {
   const [cpfCnpj, setCpfCnpj] = useState("");
   const [phone, setPhone] = useState("");
   const [billingType, setBillingType] = useState<AsaasBillingType>("PIX");
-  const [renewalMonths, setRenewalMonths] = useState(1);
+  const [renewalMonths, setRenewalMonths] = useState<ProPlanCycleMonths>(1);
 
   const [alertDraft, setAlertDraft] = useState({
     receiveLostAlerts: false,
@@ -114,16 +119,13 @@ export default function PlansPage() {
     currentOwner.subscription.status === "active" &&
     !isProPlan;
 
+  const selectedCyclePrice = getProPlanChargeValue(renewalMonths) ?? 0;
+  const selectedCycleMonthlyEquivalent = getProPlanMonthlyEquivalent(renewalMonths) ?? 0;
+
   const autoSyncTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const autoSyncAttemptRef = useRef(0);
   const autoSyncInFlightRef = useRef(false);
   const handledSuccessParamRef = useRef(false);
-
-  useEffect(() => {
-    if (isReady && !currentOwner) {
-      router.push("/login?next=/plans");
-    }
-  }, [currentOwner, isReady, router]);
 
   useEffect(() => {
     if (!currentOwner) {
@@ -142,7 +144,7 @@ export default function PlansPage() {
 
   const asaasStatusLabel = useMemo(() => {
     if (!currentOwner) {
-      return "";
+      return "Veja os planos e entre para contratar";
     }
 
     if (isOwnerPro(currentOwner)) {
@@ -322,7 +324,7 @@ export default function PlansPage() {
     void startAutoSync({ showStartMessage: true });
   }, [currentOwner, isReady, startAutoSync]);
 
-  if (!isReady || !currentOwner) {
+  if (!isReady) {
     return (
       <div className="rounded-3xl border border-white/10 bg-white/5 p-8 text-center text-zinc-300">
         Carregando planos...
@@ -348,7 +350,8 @@ export default function PlansPage() {
     }
 
     setIsBillingSubmitting(true);
-    setPlanFeedback(`Gerando cobranca de ${renewalMonths} mes(es) no Asaas...`);
+    const cycleLabel = getProPlanCycleLabel(renewalMonths) || `${renewalMonths} mes(es)`;
+    setPlanFeedback(`Gerando cobranca ${cycleLabel} (${formatBrl(selectedCyclePrice)}) no Asaas...`);
 
     try {
       const response = await authFetch("/api/billing/asaas/subscription/start", {
@@ -468,10 +471,7 @@ export default function PlansPage() {
         <h1 className="mt-2 text-2xl font-semibold tracking-tight text-white sm:text-4xl">
           Escolha seu nivel de protecao
         </h1>
-        <p className="mt-3 text-sm text-zinc-300">
-          Integracao real com Asaas: gere cobrancas de renovacao por 1, 3, 6 ou 12 meses.
-          A ativacao do plano ocorre automaticamente apos confirmacao de pagamento no webhook.
-        </p>
+      
         <p className="mt-3 inline-flex rounded-full border border-cyan-300/35 bg-cyan-500/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-cyan-100">
           {asaasStatusLabel}
         </p>
@@ -486,20 +486,26 @@ export default function PlansPage() {
             <li>Foto de perfil</li>
             <li>Contato principal</li>
           </ul>
-          {isProPlan ? (
-            <p className="mt-6 text-sm text-zinc-300">
-              Se o pagamento nao for renovado ate o vencimento, o plano volta para o basico automaticamente.
-            </p>
+          {currentOwner ? (
+            isProPlan ? (
+              <p className="mt-6 text-sm text-zinc-300">
+                Se o pagamento nao for renovado ate o vencimento, o plano volta para o basico automaticamente.
+              </p>
+            ) : (
+              <p className="mt-6 inline-flex rounded-full border border-emerald-300/35 bg-emerald-500/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-emerald-100">
+                Plano atual
+              </p>
+            )
           ) : (
-            <p className="mt-6 inline-flex rounded-full border border-emerald-300/35 bg-emerald-500/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-emerald-100">
-              Plano atual
+            <p className="mt-6 text-sm text-zinc-300">
+              Disponivel para todas as contas apos o cadastro.
             </p>
           )}
         </article>
 
         <article className="rounded-3xl border border-cyan-300/30 bg-cyan-500/10 p-5 sm:p-6">
           <p className="text-xs uppercase tracking-[0.14em] text-cyan-100">Plano Pro</p>
-          <h2 className="mt-2 text-2xl font-semibold text-white">R$ 7,90 / mes</h2>
+          <h2 className="mt-2 text-2xl font-semibold text-white">R$ 9,90 / mes</h2>
           <ul className="mt-4 grid gap-2 text-sm text-cyan-100">
             <li>Tudo do plano Start</li>
             <li>Bio, idade, raca, peso e cidade</li>
@@ -507,89 +513,111 @@ export default function PlansPage() {
             <li>Informacoes medicas</li>
             <li>Modo perdido + recompensa</li>
             <li>Alerta para tutores proximos</li>
+            <li>Trimestral: R$ 27,90</li>
+            <li>Semestral: R$ 52,90</li>
+            <li>Anual: R$ 99,00</li>
           </ul>
 
-          {isProPlan ? (
+          {currentOwner && isProPlan ? (
             <p className="mt-6 inline-flex rounded-full border border-cyan-200/40 bg-cyan-500/20 px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-cyan-50">
               Plano atual
             </p>
           ) : null}
 
-          {planExpiresLabel ? (
-            <p className="mt-3 text-sm font-medium text-cyan-100">
-              {hasExpiredPlan
-                ? `Seu plano venceu em ${planExpiresLabel}.`
-                : `Seu plano vence em ${planExpiresLabel}.`}
-            </p>
+          {currentOwner ? (
+            planExpiresLabel ? (
+              <p className="mt-3 text-sm font-medium text-cyan-100">
+                {hasExpiredPlan
+                  ? `Seu plano venceu em ${planExpiresLabel}.`
+                  : `Seu plano vence em ${planExpiresLabel}.`}
+              </p>
+            ) : (
+              <p className="mt-3 text-sm text-cyan-100/90">Sem vencimento ativo no momento.</p>
+            )
           ) : (
-            <p className="mt-3 text-sm text-cyan-100/90">Sem vencimento ativo no momento.</p>
+            <p className="mt-3 text-sm text-cyan-100/90">
+              Visualize os beneficios e valores. Para pagar, entre na sua conta.
+            </p>
           )}
 
           <div className="mt-6 grid gap-3">
-            <label className="grid gap-2 text-sm text-cyan-100">
-              <span className="text-xs uppercase tracking-[0.14em] text-cyan-200">
-                CPF/CNPJ (obrigatorio apenas na 1a cobranca)
-              </span>
-              <input
-                type="text"
-                value={cpfCnpj}
-                onChange={(event) => setCpfCnpj(event.target.value)}
-                placeholder="Somente numeros"
-                className="rounded-2xl border border-cyan-200/25 bg-cyan-950/20 px-4 py-3 text-white outline-none placeholder:text-cyan-200/50 focus:border-cyan-200/55"
-              />
-            </label>
+            {currentOwner ? (
+              <>
+                <label className="grid gap-2 text-sm text-cyan-100">
+                  <span className="text-xs uppercase tracking-[0.14em] text-cyan-200">
+                    CPF/CNPJ (obrigatorio apenas na 1a cobranca)
+                  </span>
+                  <input
+                    type="text"
+                    value={cpfCnpj}
+                    onChange={(event) => setCpfCnpj(event.target.value)}
+                    placeholder="Somente numeros"
+                    className="rounded-2xl border border-cyan-200/25 bg-cyan-950/20 px-4 py-3 text-white outline-none placeholder:text-cyan-200/50 focus:border-cyan-200/55"
+                  />
+                </label>
 
-            <label className="grid gap-2 text-sm text-cyan-100">
-              <span className="text-xs uppercase tracking-[0.14em] text-cyan-200">Telefone (opcional)</span>
-              <input
-                type="text"
-                value={phone}
-                onChange={(event) => setPhone(event.target.value)}
-                placeholder="DDD + numero"
-                className="rounded-2xl border border-cyan-200/25 bg-cyan-950/20 px-4 py-3 text-white outline-none placeholder:text-cyan-200/50 focus:border-cyan-200/55"
-              />
-            </label>
+                <label className="grid gap-2 text-sm text-cyan-100">
+                  <span className="text-xs uppercase tracking-[0.14em] text-cyan-200">Telefone (opcional)</span>
+                  <input
+                    type="text"
+                    value={phone}
+                    onChange={(event) => setPhone(event.target.value)}
+                    placeholder="DDD + numero"
+                    className="rounded-2xl border border-cyan-200/25 bg-cyan-950/20 px-4 py-3 text-white outline-none placeholder:text-cyan-200/50 focus:border-cyan-200/55"
+                  />
+                </label>
 
-            <label className="grid gap-2 text-sm text-cyan-100">
-              <span className="text-xs uppercase tracking-[0.14em] text-cyan-200">Forma de cobranca</span>
-              <div className="grid grid-cols-1 gap-2 rounded-2xl border border-cyan-200/25 bg-cyan-950/15 p-2 sm:grid-cols-3">
-                {BILLING_OPTIONS.map((option) => {
-                  const isActive = billingType === option.value;
-                  return (
-                    <button
-                      key={option.value}
-                      type="button"
-                      onClick={() => setBillingType(option.value)}
-                      className={`rounded-xl px-3 py-2 text-xs font-semibold uppercase tracking-[0.08em] transition ${
-                        isActive
-                          ? "border border-cyan-100/50 bg-cyan-300/20 text-cyan-50 shadow-[0_0_20px_rgba(34,211,238,0.18)]"
-                          : "border border-transparent bg-cyan-950/20 text-cyan-100/80 hover:border-cyan-200/30 hover:text-cyan-50"
-                      }`}
-                    >
-                      {option.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </label>
+                <label className="grid gap-2 text-sm text-cyan-100">
+                  <span className="text-xs uppercase tracking-[0.14em] text-cyan-200">Forma de cobranca</span>
+                  <div className="grid grid-cols-1 gap-2 rounded-2xl border border-cyan-200/25 bg-cyan-950/15 p-2 sm:grid-cols-3">
+                    {BILLING_OPTIONS.map((option) => {
+                      const isActive = billingType === option.value;
+                      return (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() => setBillingType(option.value)}
+                          className={`rounded-xl px-3 py-2 text-xs font-semibold uppercase tracking-[0.08em] transition ${
+                            isActive
+                              ? "border border-cyan-100/50 bg-cyan-300/20 text-cyan-50 shadow-[0_0_20px_rgba(34,211,238,0.18)]"
+                              : "border border-transparent bg-cyan-950/20 text-cyan-100/80 hover:border-cyan-200/30 hover:text-cyan-50"
+                          }`}
+                        >
+                          {option.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </label>
+              </>
+            ) : null}
 
             <label className="grid gap-2 text-sm text-cyan-100">
               <span className="text-xs uppercase tracking-[0.14em] text-cyan-200">Renovar por</span>
               <div className="grid grid-cols-2 gap-2 rounded-2xl border border-cyan-200/25 bg-cyan-950/15 p-2 sm:grid-cols-4">
-                {RENEWAL_OPTIONS.map((months) => {
+                {PRO_PLAN_CYCLES.map((months) => {
+                  const cycleLabel = getProPlanCycleLabel(months);
+                  const cyclePrice = getProPlanChargeValue(months);
+                  const cycleMonthly = getProPlanMonthlyEquivalent(months);
                   const isActive = renewalMonths === months;
                   return (
                     <button
                       key={months}
                       type="button"
                       onClick={() => setRenewalMonths(months)}
-                      className={`rounded-xl px-2 py-2 text-xs font-semibold uppercase tracking-[0.12em] transition ${
+                      className={`rounded-xl px-2 py-2 text-left text-[11px] font-semibold uppercase tracking-[0.08em] transition ${
                         isActive
                           ? "border border-white/50 bg-white text-zinc-900"
                           : "border border-transparent bg-cyan-950/20 text-cyan-100/85 hover:border-cyan-200/30 hover:text-cyan-50"
                       }`}
                     >
-                      {months}m
+                      <span className="block">{cycleLabel || `${months}m`}</span>
+                      <span className="block text-[10px] normal-case tracking-normal opacity-90">
+                        {cyclePrice !== null ? formatBrl(cyclePrice) : "--"}
+                      </span>
+                      <span className="block text-[10px] normal-case tracking-normal opacity-75">
+                        {cycleMonthly !== null ? `${formatBrl(cycleMonthly)}/mes` : ""}
+                      </span>
                     </button>
                   );
                 })}
@@ -597,25 +625,41 @@ export default function PlansPage() {
             </label>
 
             <div className="mt-2 flex flex-wrap gap-3">
-              <button
-                type="button"
-                onClick={() => {
-                  void handleUpgradeToProAsaas();
-                }}
-                disabled={isBillingSubmitting}
-                className="w-full rounded-full bg-white px-5 py-3 text-xs font-semibold uppercase tracking-[0.14em] text-zinc-950 disabled:opacity-60 sm:w-auto"
-              >
-                {isBillingSubmitting ? "Gerando..." : `Renovar ${renewalMonths} mes(es)`}
-              </button>
+              {currentOwner ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    void handleUpgradeToProAsaas();
+                  }}
+                  disabled={isBillingSubmitting}
+                  className="w-full rounded-full bg-white px-5 py-3 text-xs font-semibold uppercase tracking-[0.14em] text-zinc-950 disabled:opacity-60 sm:w-auto"
+                >
+                  {isBillingSubmitting
+                    ? "Gerando..."
+                    : `Renovar ${getProPlanCycleLabel(renewalMonths)} - ${formatBrl(selectedCyclePrice)}`}
+                </button>
+              ) : (
+                <Link
+                  href="/login?next=/plans"
+                  className="w-full rounded-full bg-white px-5 py-3 text-center text-xs font-semibold uppercase tracking-[0.14em] text-zinc-950 sm:w-auto"
+                >
+                  Entrar para contratar
+                </Link>
+              )}
             </div>
 
-            {isAutoCheckingPayment || isVerifyingBilling ? (
+            <p className="text-xs text-cyan-100/90">
+              Plano selecionado: {getProPlanCycleLabel(renewalMonths)} ({formatBrl(selectedCyclePrice)}),
+              equivalente a {formatBrl(selectedCycleMonthlyEquivalent)}/mes.
+            </p>
+
+            {currentOwner && (isAutoCheckingPayment || isVerifyingBilling) ? (
               <p className="text-xs text-cyan-100/90">
                 Verificacao automatica ativa. Assim que o Asaas confirmar, seu plano sera renovado.
               </p>
             ) : null}
 
-            {paymentUrl ? (
+            {currentOwner && paymentUrl ? (
               <a
                 href={paymentUrl}
                 target="_blank"
@@ -627,102 +671,125 @@ export default function PlansPage() {
             ) : null}
           </div>
 
-          <p className="mt-4 text-sm text-cyan-50/90">{planFeedback}</p>
+          {currentOwner ? (
+            <p className="mt-4 text-sm text-cyan-50/90">{planFeedback}</p>
+          ) : (
+            <p className="mt-4 text-sm text-cyan-50/90">
+              O pagamento e liberado somente para usuarios autenticados.
+            </p>
+          )}
         </article>
       </section>
 
-      <section className="rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h3 className="text-xl font-semibold text-white">Alertas de pet perdido por proximidade</h3>
-            <p className="mt-1 text-sm text-zinc-300">
-              Quando um pet for marcado como perdido, voce recebe notificacao se estiver no raio configurado.
-            </p>
+      {currentOwner ? (
+        <section className="rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-xl font-semibold text-white">Alertas de pet perdido por proximidade</h3>
+              <p className="mt-1 text-sm text-zinc-300">
+                Quando um pet for marcado como perdido, voce recebe notificacao se estiver no raio configurado.
+              </p>
+            </div>
+            <span className="rounded-full border border-white/15 px-3 py-1 text-xs uppercase tracking-[0.14em] text-zinc-300">
+              {isProPlan ? "Disponivel no Pro" : "Upgrade para Pro"}
+            </span>
           </div>
-          <span className="rounded-full border border-white/15 px-3 py-1 text-xs uppercase tracking-[0.14em] text-zinc-300">
-            {isProPlan ? "Disponivel no Pro" : "Upgrade para Pro"}
-          </span>
-        </div>
 
-        <div className="mt-5 grid gap-4 sm:grid-cols-2">
-          <label className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-zinc-200">
-            <input
-              type="checkbox"
-              checked={alertDraft.receiveLostAlerts}
-              onChange={(event) =>
-                setAlertDraft((prev) => ({
-                  ...prev,
-                  receiveLostAlerts: event.target.checked,
-                }))
-              }
-              className="size-4 accent-cyan-400"
-            />
-            Receber alertas de pets perdidos perto de mim
-          </label>
+          <div className="mt-5 grid gap-4 sm:grid-cols-2">
+            <label className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-zinc-200">
+              <input
+                type="checkbox"
+                checked={alertDraft.receiveLostAlerts}
+                onChange={(event) =>
+                  setAlertDraft((prev) => ({
+                    ...prev,
+                    receiveLostAlerts: event.target.checked,
+                  }))
+                }
+                className="size-4 accent-cyan-400"
+              />
+              Receber alertas de pets perdidos perto de mim
+            </label>
 
-          <label className="grid gap-2 text-sm text-zinc-300">
-            <span className="text-xs uppercase tracking-[0.14em] text-zinc-400">Raio de alerta (km)</span>
-            <input
-              type="number"
-              min={1}
-              max={50}
-              value={alertDraft.radiusKm}
-              onChange={(event) =>
-                setAlertDraft((prev) => ({
-                  ...prev,
-                  radiusKm: Number(event.target.value) || 5,
-                }))
-              }
-              className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none focus:border-cyan-300/60"
-            />
-          </label>
-        </div>
+            <label className="grid gap-2 text-sm text-zinc-300">
+              <span className="text-xs uppercase tracking-[0.14em] text-zinc-400">Raio de alerta (km)</span>
+              <input
+                type="number"
+                min={1}
+                max={50}
+                value={alertDraft.radiusKm}
+                onChange={(event) =>
+                  setAlertDraft((prev) => ({
+                    ...prev,
+                    radiusKm: Number(event.target.value) || 5,
+                  }))
+                }
+                className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none focus:border-cyan-300/60"
+              />
+            </label>
+          </div>
 
-        <div className="mt-4 grid gap-4 sm:grid-cols-2">
-          <button
-            type="button"
-            onClick={handleUseMyLocation}
-            disabled={isLoadingGeo}
-            className="rounded-full border border-cyan-300/40 bg-cyan-500/10 px-5 py-3 text-xs font-semibold uppercase tracking-[0.14em] text-cyan-100 disabled:opacity-60"
-          >
-            {isLoadingGeo ? "Localizando..." : "Usar minha localizacao"}
-          </button>
+          <div className="mt-4 grid gap-4 sm:grid-cols-2">
+            <button
+              type="button"
+              onClick={handleUseMyLocation}
+              disabled={isLoadingGeo}
+              className="rounded-full border border-cyan-300/40 bg-cyan-500/10 px-5 py-3 text-xs font-semibold uppercase tracking-[0.14em] text-cyan-100 disabled:opacity-60"
+            >
+              {isLoadingGeo ? "Localizando..." : "Usar minha localizacao"}
+            </button>
 
-          <label className="grid gap-2 text-sm text-zinc-300">
-            <span className="text-xs uppercase tracking-[0.14em] text-zinc-400">Referencia da localizacao</span>
-            <input
-              type="text"
-              value={alertDraft.locationLabel}
-              onChange={(event) =>
-                setAlertDraft((prev) => ({
-                  ...prev,
-                  locationLabel: event.target.value,
-                }))
-              }
-              placeholder="Ex: Vila Mariana, Sao Paulo"
-              className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none focus:border-cyan-300/60"
-            />
-          </label>
-        </div>
+            <label className="grid gap-2 text-sm text-zinc-300">
+              <span className="text-xs uppercase tracking-[0.14em] text-zinc-400">Referencia da localizacao</span>
+              <input
+                type="text"
+                value={alertDraft.locationLabel}
+                onChange={(event) =>
+                  setAlertDraft((prev) => ({
+                    ...prev,
+                    locationLabel: event.target.value,
+                  }))
+                }
+                placeholder="Ex: Vila Mariana, Sao Paulo"
+                className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none focus:border-cyan-300/60"
+              />
+            </label>
+          </div>
 
-        <p className="mt-3 text-xs text-zinc-400">
-          Coordenadas: {alertDraft.locationLat !== null && alertDraft.locationLng !== null ? `${alertDraft.locationLat.toFixed(5)}, ${alertDraft.locationLng.toFixed(5)}` : "nao definidas"}
-        </p>
+          <p className="mt-3 text-xs text-zinc-400">
+            Coordenadas: {alertDraft.locationLat !== null && alertDraft.locationLng !== null ? `${alertDraft.locationLat.toFixed(5)}, ${alertDraft.locationLng.toFixed(5)}` : "nao definidas"}
+          </p>
 
-        <div className="mt-5 flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            onClick={() => {
-              void handleSaveAlerts();
-            }}
-            disabled={isSubmitting}
-            className="rounded-full bg-white px-6 py-3 text-xs font-semibold uppercase tracking-[0.14em] text-zinc-950 disabled:opacity-60"
-          >
-            Salvar configuracoes
-          </button>
-          <p className="text-sm text-zinc-300">{alertFeedback}</p>
-        </div>
-      </section>
+          <div className="mt-5 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                void handleSaveAlerts();
+              }}
+              disabled={isSubmitting}
+              className="rounded-full bg-white px-6 py-3 text-xs font-semibold uppercase tracking-[0.14em] text-zinc-950 disabled:opacity-60"
+            >
+              Salvar configuracoes
+            </button>
+            <p className="text-sm text-zinc-300">{alertFeedback}</p>
+          </div>
+        </section>
+      ) : (
+        <section className="rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur">
+          <h3 className="text-xl font-semibold text-white">Alertas de pet perdido por proximidade</h3>
+          <p className="mt-2 text-sm text-zinc-300">
+            Disponivel no Plano Pro para usuarios logados. Crie sua conta para ativar alertas por localizacao.
+          </p>
+          <div className="mt-4">
+            <Link
+              href="/login?next=/plans"
+              className="inline-flex rounded-full border border-cyan-300/40 bg-cyan-500/10 px-5 py-3 text-xs font-semibold uppercase tracking-[0.14em] text-cyan-100"
+            >
+              Entrar para ativar alertas
+            </Link>
+          </div>
+        </section>
+      )}
     </div>
   );
 }

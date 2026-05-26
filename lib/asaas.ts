@@ -124,20 +124,6 @@ export function ensureAsaasProductionSafety() {
   return baseUrl;
 }
 
-export function getAsaasProPrice() {
-  const raw = process.env.ASAAS_PRO_MONTHLY_PRICE?.trim();
-  if (!raw) {
-    return 29.9;
-  }
-
-  const parsed = Number(raw.replace(",", "."));
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return 29.9;
-  }
-
-  return Math.round(parsed * 100) / 100;
-}
-
 function parseAsaasError(payload: AsaasErrorPayload | null | undefined) {
   if (!payload) {
     return "Falha ao comunicar com o Asaas.";

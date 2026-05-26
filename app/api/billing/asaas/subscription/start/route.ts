@@ -4,7 +4,6 @@ import {
   buildNextDueDate,
   createAsaasCustomer,
   createAsaasPayment,
-  getAsaasProPrice,
   sanitizeCpfCnpj,
   sanitizePhone,
   type AsaasPayment,
@@ -12,9 +11,13 @@ import {
 } from "@/lib/asaas";
 import {
   buildPlanExternalReference,
-  clampRenewalMonths,
   isIsoDateInFuture,
 } from "@/lib/plan-billing";
+import {
+  getProPlanChargeValue,
+  getProPlanCycleLabel,
+  isProPlanCycleMonths,
+} from "@/lib/pro-plan-pricing";
 import { consumeRateLimit } from "@/lib/rate-limit";
 import { requireAuthenticatedUser } from "@/lib/request-auth";
 import { getRequestIp } from "@/lib/request-security";
@@ -139,9 +142,29 @@ export async function POST(request: Request) {
       );
     }
 
-    const months = clampRenewalMonths(
-      typeof body.months === "number" ? body.months : Number(body.months ?? 1),
-    );
+    const rawMonths = typeof body.months === "number" ? body.months : Number(body.months ?? 1);
+    const parsedMonths = Number.isFinite(rawMonths) ? Math.trunc(rawMonths) : 1;
+    if (!isProPlanCycleMonths(parsedMonths)) {
+      return NextResponse.json(
+        {
+          ok: false,
+          message: "Ciclo invalido. Escolha 1, 3, 6 ou 12 meses.",
+        },
+        { status: 400 },
+      );
+    }
+
+    const months = parsedMonths;
+    const chargeValue = getProPlanChargeValue(months);
+    if (chargeValue === null) {
+      return NextResponse.json(
+        {
+          ok: false,
+          message: "Plano de cobranca invalido.",
+        },
+        { status: 400 },
+      );
+    }
 
     const supabase = createSupabaseServerClient();
 
@@ -192,9 +215,9 @@ export async function POST(request: Request) {
     const paymentPayload = {
       customer: asaasCustomerId,
       billingType,
-      value: Math.round(getAsaasProPrice() * months * 100) / 100,
+      value: chargeValue,
       dueDate: buildNextDueDate(1),
-      description: `PetTapBR Plano Pro - ${months} mes(es)`,
+      description: `PetTapBR Plano Pro - ${getProPlanCycleLabel(months)} (${months} mes(es))`,
       externalReference: buildPlanExternalReference(owner.id, months, now),
     };
 
@@ -296,7 +319,7 @@ export async function POST(request: Request) {
       asaasCustomerId,
       asaasPaymentId: payment.id,
       message: paymentUrl
-        ? `Cobranca de ${months} mes(es) criada. Abra a fatura para concluir o pagamento.`
+        ? `Cobranca ${getProPlanCycleLabel(months)} criada. Abra a fatura para concluir o pagamento.`
         : "Cobranca criada, mas nao foi possivel localizar a URL da fatura.",
     });
   } catch (error) {
