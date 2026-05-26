@@ -71,80 +71,80 @@ export async function POST(request: Request) {
     );
   }
 
-  let body: StartSubscriptionBody;
-
   try {
-    body = (await request.json()) as StartSubscriptionBody;
-  } catch {
-    return NextResponse.json(
-      {
-        ok: false,
-        message: "Corpo da requisicao invalido.",
-      },
-      { status: 400 },
-    );
-  }
+    let body: StartSubscriptionBody;
 
-  const ownerId = auth.user.id;
-  const rateLimit = consumeRateLimit({
-    key: `billing-start:${ownerId}:${getRequestIp(request)}`,
-    maxRequests: 25,
-    windowMs: 60 * 60 * 1000,
-  });
-
-  if (!rateLimit.ok) {
-    return NextResponse.json(
-      {
-        ok: false,
-        message: "Muitas tentativas de gerar cobranca. Aguarde para tentar novamente.",
-      },
-      {
-        status: 429,
-        headers: {
-          "Retry-After": String(rateLimit.retryAfterSeconds),
+    try {
+      body = (await request.json()) as StartSubscriptionBody;
+    } catch {
+      return NextResponse.json(
+        {
+          ok: false,
+          message: "Corpo da requisicao invalido.",
         },
-      },
+        { status: 400 },
+      );
+    }
+
+    const ownerId = auth.user.id;
+    const rateLimit = consumeRateLimit({
+      key: `billing-start:${ownerId}:${getRequestIp(request)}`,
+      maxRequests: 25,
+      windowMs: 60 * 60 * 1000,
+    });
+
+    if (!rateLimit.ok) {
+      return NextResponse.json(
+        {
+          ok: false,
+          message: "Muitas tentativas de gerar cobranca. Aguarde para tentar novamente.",
+        },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": String(rateLimit.retryAfterSeconds),
+          },
+        },
+      );
+    }
+
+    const cpfCnpj = sanitizeCpfCnpj(body.cpfCnpj ?? "");
+    const phone = sanitizePhone(body.phone ?? "");
+    const billingType = body.billingType ?? "PIX";
+    if (!ALLOWED_BILLING_TYPES.has(billingType)) {
+      return NextResponse.json(
+        {
+          ok: false,
+          message: "Forma de cobranca invalida.",
+        },
+        { status: 400 },
+      );
+    }
+
+    const months = clampRenewalMonths(
+      typeof body.months === "number" ? body.months : Number(body.months ?? 1),
     );
-  }
 
-  const cpfCnpj = sanitizeCpfCnpj(body.cpfCnpj ?? "");
-  const phone = sanitizePhone(body.phone ?? "");
-  const billingType = body.billingType ?? "PIX";
-  if (!ALLOWED_BILLING_TYPES.has(billingType)) {
-    return NextResponse.json(
-      {
-        ok: false,
-        message: "Forma de cobranca invalida.",
-      },
-      { status: 400 },
-    );
-  }
+    const supabase = createSupabaseServerClient();
 
-  const months = clampRenewalMonths(
-    typeof body.months === "number" ? body.months : Number(body.months ?? 1),
-  );
+    const { data: ownerData, error: ownerError } = await supabase
+      .from("owners")
+      .select("id, full_name, email, asaas_customer_id, plan_tier, plan_status, plan_expires_at")
+      .eq("id", ownerId)
+      .limit(1);
 
-  const supabase = createSupabaseServerClient();
+    if (ownerError || !ownerData || ownerData.length === 0) {
+      return NextResponse.json(
+        {
+          ok: false,
+          message: ownerError?.message || "Tutor nao encontrado.",
+        },
+        { status: 404 },
+      );
+    }
 
-  const { data: ownerData, error: ownerError } = await supabase
-    .from("owners")
-    .select("id, full_name, email, asaas_customer_id, plan_tier, plan_status, plan_expires_at")
-    .eq("id", ownerId)
-    .limit(1);
+    const owner = ownerData[0] as OwnerPlanRow;
 
-  if (ownerError || !ownerData || ownerData.length === 0) {
-    return NextResponse.json(
-      {
-        ok: false,
-        message: ownerError?.message || "Tutor nao encontrado.",
-      },
-      { status: 404 },
-    );
-  }
-
-  const owner = ownerData[0] as OwnerPlanRow;
-
-  try {
     let asaasCustomerId = (owner.asaas_customer_id ?? "").trim();
 
     if (!asaasCustomerId) {
@@ -235,12 +235,15 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     console.error("[asaas/subscription/start] erro ao gerar cobranca", error);
-    const errorMessage =
-      error instanceof Error ? error.message : "Falha ao iniciar cobranca no Asaas.";
+    const errorMessage = error instanceof Error ? error.message : "Falha ao iniciar cobranca no Asaas.";
     const normalizedMessage = errorMessage.toLowerCase();
     const statusCode =
       normalizedMessage.includes("invalid_environment") ||
       normalizedMessage.includes("api key") ||
+      normalizedMessage.includes("chave de api") ||
+      normalizedMessage.includes("nao pertence a este ambiente") ||
+      normalizedMessage.includes("não pertence a este ambiente") ||
+      normalizedMessage.includes("ambiente") ||
       normalizedMessage.includes("token") ||
       normalizedMessage.includes("dominio")
         ? 400
