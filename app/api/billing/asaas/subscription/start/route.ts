@@ -46,14 +46,12 @@ function getPaymentUrl(payment: {
   return payment.invoiceUrl || payment.bankSlipUrl || payment.transactionReceiptUrl || "";
 }
 
-function resolveSuccessCallbackUrl(request: Request) {
+function resolveSuccessCallbackUrl() {
   const configured = process.env.ASAAS_SUCCESS_URL?.trim();
   if (configured) {
     return configured;
   }
-
-  const callbackUrl = new URL("/plans?asaas=success", request.url);
-  return callbackUrl.toString();
+  return "";
 }
 
 export async function POST(request: Request) {
@@ -172,7 +170,7 @@ export async function POST(request: Request) {
     }
 
     const now = Date.now();
-    const callbackSuccessUrl = resolveSuccessCallbackUrl(request);
+    const callbackSuccessUrl = resolveSuccessCallbackUrl();
     const paymentPayload = {
       customer: asaasCustomerId,
       billingType,
@@ -236,12 +234,24 @@ export async function POST(request: Request) {
         : "Cobranca criada, mas nao foi possivel localizar a URL da fatura.",
     });
   } catch (error) {
+    console.error("[asaas/subscription/start] erro ao gerar cobranca", error);
+    const errorMessage =
+      error instanceof Error ? error.message : "Falha ao iniciar cobranca no Asaas.";
+    const normalizedMessage = errorMessage.toLowerCase();
+    const statusCode =
+      normalizedMessage.includes("invalid_environment") ||
+      normalizedMessage.includes("api key") ||
+      normalizedMessage.includes("token") ||
+      normalizedMessage.includes("dominio")
+        ? 400
+        : 500;
+
     return NextResponse.json(
       {
         ok: false,
-        message: error instanceof Error ? error.message : "Falha ao iniciar cobranca no Asaas.",
+        message: errorMessage,
       },
-      { status: 500 },
+      { status: statusCode },
     );
   }
 }
