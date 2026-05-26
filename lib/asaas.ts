@@ -1,6 +1,7 @@
 import "server-only";
 
-const DEFAULT_ASAAS_BASE_URL = "https://api-sandbox.asaas.com/v3";
+const ASAAS_SANDBOX_BASE_URL = "https://api-sandbox.asaas.com/v3";
+const ASAAS_PRODUCTION_BASE_URL = "https://api.asaas.com/v3";
 
 export type AsaasBillingType = "UNDEFINED" | "BOLETO" | "CREDIT_CARD" | "PIX";
 
@@ -77,6 +78,14 @@ interface AsaasListResponse<T> {
   data?: T[];
 }
 
+function normalizeAsaasBaseUrl(value: string) {
+  return value.replace(/\/+$/, "");
+}
+
+function isVercelProductionEnvironment() {
+  return (process.env.VERCEL_ENV ?? "").trim() === "production";
+}
+
 function getAsaasApiKey() {
   const key = process.env.ASAAS_API_KEY?.trim();
   if (!key) {
@@ -87,7 +96,32 @@ function getAsaasApiKey() {
 }
 
 export function getAsaasBaseUrl() {
-  return process.env.ASAAS_BASE_URL?.trim() || DEFAULT_ASAAS_BASE_URL;
+  const configuredBaseUrl = process.env.ASAAS_BASE_URL?.trim();
+  if (configuredBaseUrl) {
+    return normalizeAsaasBaseUrl(configuredBaseUrl);
+  }
+
+  if (isVercelProductionEnvironment() || process.env.NODE_ENV === "production") {
+    return ASAAS_PRODUCTION_BASE_URL;
+  }
+
+  return ASAAS_SANDBOX_BASE_URL;
+}
+
+export function isAsaasSandboxBaseUrl(baseUrl: string) {
+  const normalizedBaseUrl = normalizeAsaasBaseUrl(baseUrl).toLowerCase();
+  return normalizedBaseUrl.includes("sandbox.asaas.com");
+}
+
+export function ensureAsaasProductionSafety() {
+  const baseUrl = getAsaasBaseUrl();
+  if (isVercelProductionEnvironment() && isAsaasSandboxBaseUrl(baseUrl)) {
+    throw new Error(
+      "ASAAS_BASE_URL aponta para Sandbox em producao. Use https://api.asaas.com/v3.",
+    );
+  }
+
+  return baseUrl;
 }
 
 export function getAsaasProPrice() {
@@ -128,7 +162,7 @@ async function asaasRequest<TResponse>(
   body?: unknown,
 ): Promise<TResponse> {
   const key = getAsaasApiKey();
-  const baseUrl = getAsaasBaseUrl();
+  const baseUrl = ensureAsaasProductionSafety();
   const url = `${baseUrl}${path}`;
 
   const response = await fetch(url, {

@@ -28,17 +28,10 @@ interface AsaasWebhookSubscription {
   customer?: string | null;
 }
 
-interface AsaasWebhookCheckout {
-  id?: string;
-  status?: string;
-  customer?: string | null;
-}
-
 interface AsaasWebhookPayload {
   event?: string;
   payment?: AsaasWebhookPayment;
   subscription?: AsaasWebhookSubscription;
-  checkout?: AsaasWebhookCheckout;
 }
 
 interface OwnerLookupRow {
@@ -58,7 +51,7 @@ interface ApplyPaidPlanResult {
   expiresAt: string | null;
 }
 
-const ACTIVATION_EVENTS = new Set(["PAYMENT_RECEIVED", "PAYMENT_CONFIRMED", "CHECKOUT_PAID"]);
+const ACTIVATION_EVENTS = new Set(["PAYMENT_RECEIVED", "PAYMENT_CONFIRMED"]);
 const INACTIVATION_EVENTS = new Set(["SUBSCRIPTION_INACTIVATED", "SUBSCRIPTION_DELETED"]);
 
 function normalize(value: string | null | undefined) {
@@ -264,7 +257,6 @@ export async function POST(request: Request) {
     normalize(payload.payment?.subscription) || normalize(payload.subscription?.id);
   const customerId =
     normalize(payload.payment?.customer) ||
-    normalize(payload.checkout?.customer) ||
     normalize(payload.subscription?.customer);
 
   const { owner, matchBy } = await resolveOwner(subscriptionId, customerId);
@@ -275,7 +267,6 @@ export async function POST(request: Request) {
   const supabase = createSupabaseServerClient();
 
   if (ACTIVATION_EVENTS.has(event)) {
-    const isCheckoutPaidEvent = event === "CHECKOUT_PAID";
     let paymentId = normalize(payload.payment?.id);
     let payment: AsaasPayment | null = null;
 
@@ -324,35 +315,11 @@ export async function POST(request: Request) {
       });
     }
 
-    if (!isCheckoutPaidEvent) {
-      return NextResponse.json({
-        ok: true,
-        action: "awaiting_payment_confirmation",
-        matchBy,
-      });
-    }
-
-    const nowIso = new Date().toISOString();
-    const nextSubscriptionId = subscriptionId || owner.asaas_subscription_id;
-    const nextCustomerId = customerId || owner.asaas_customer_id;
-
-    const { error } = await supabase
-      .from("owners")
-      .update({
-        plan_tier: "pro",
-        plan_status: "active",
-        plan_provider: "asaas",
-        asaas_customer_id: nextCustomerId,
-        asaas_subscription_id: nextSubscriptionId,
-        plan_updated_at: nowIso,
-      })
-      .eq("id", owner.id);
-
-    if (error) {
-      return NextResponse.json({ ok: false, message: error.message }, { status: 500 });
-    }
-
-    return NextResponse.json({ ok: true, action: "activated_without_payment", matchBy });
+    return NextResponse.json({
+      ok: true,
+      action: "awaiting_payment_confirmation",
+      matchBy,
+    });
   }
 
   if (isInactiveSubscriptionEvent(event, payload)) {

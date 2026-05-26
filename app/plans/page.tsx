@@ -469,8 +469,8 @@ export default function PlansPage() {
           Escolha seu nivel de protecao
         </h1>
         <p className="mt-3 text-sm text-zinc-300">
-          Integracao real com Asaas (sandbox): gere cobrancas de renovacao por 1, 3, 6 ou 12 meses
-          e confirme o pagamento para liberar todos os recursos.
+          Integracao real com Asaas: gere cobrancas de renovacao por 1, 3, 6 ou 12 meses.
+          A ativacao do plano ocorre automaticamente apos confirmacao de pagamento no webhook.
         </p>
         <p className="mt-3 inline-flex rounded-full border border-cyan-300/35 bg-cyan-500/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-cyan-100">
           {asaasStatusLabel}

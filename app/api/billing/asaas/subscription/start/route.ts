@@ -36,12 +36,24 @@ interface OwnerPlanRow {
   plan_expires_at: string | null;
 }
 
+const ALLOWED_BILLING_TYPES = new Set<AsaasBillingType>(["PIX", "BOLETO", "CREDIT_CARD"]);
+
 function getPaymentUrl(payment: {
   invoiceUrl?: string | null;
   bankSlipUrl?: string | null;
   transactionReceiptUrl?: string | null;
 }) {
   return payment.invoiceUrl || payment.bankSlipUrl || payment.transactionReceiptUrl || "";
+}
+
+function resolveSuccessCallbackUrl(request: Request) {
+  const configured = process.env.ASAAS_SUCCESS_URL?.trim();
+  if (configured) {
+    return configured;
+  }
+
+  const callbackUrl = new URL("/plans?asaas=success", request.url);
+  return callbackUrl.toString();
 }
 
 export async function POST(request: Request) {
@@ -100,6 +112,16 @@ export async function POST(request: Request) {
   const cpfCnpj = sanitizeCpfCnpj(body.cpfCnpj ?? "");
   const phone = sanitizePhone(body.phone ?? "");
   const billingType = body.billingType ?? "PIX";
+  if (!ALLOWED_BILLING_TYPES.has(billingType)) {
+    return NextResponse.json(
+      {
+        ok: false,
+        message: "Forma de cobranca invalida.",
+      },
+      { status: 400 },
+    );
+  }
+
   const months = clampRenewalMonths(
     typeof body.months === "number" ? body.months : Number(body.months ?? 1),
   );
@@ -150,7 +172,7 @@ export async function POST(request: Request) {
     }
 
     const now = Date.now();
-    const callbackSuccessUrl = process.env.ASAAS_SUCCESS_URL?.trim();
+    const callbackSuccessUrl = resolveSuccessCallbackUrl(request);
     const paymentPayload = {
       customer: asaasCustomerId,
       billingType,
