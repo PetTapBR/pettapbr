@@ -27,6 +27,10 @@ interface SupabaseErrorLike {
   code?: string;
 }
 
+interface OwnerLookupRow {
+  id: string;
+}
+
 function normalizeActivationCode(value: string | undefined) {
   return (value ?? "").trim().toUpperCase();
 }
@@ -73,6 +77,85 @@ function isOwnerForeignKeyClaimError(error: unknown) {
   const message = typeof candidate.message === "string" ? candidate.message.toLowerCase() : "";
 
   return code === "23503" && message.includes("nfc_tags_owner_id_fkey");
+}
+
+async function cleanupOrphanOwnerByEmail(
+  supabase: ReturnType<typeof createSupabaseServerClient>,
+  email: string,
+) {
+  const { data: ownerRows, error: ownerLookupError } = await supabase
+    .from("owners")
+    .select("id")
+    .eq("email", email)
+    .limit(2);
+
+  if (ownerLookupError) {
+    return {
+      ok: false as const,
+      message: ownerLookupError.message || "Falha ao validar e-mail no cadastro.",
+    };
+  }
+
+  if (!ownerRows || ownerRows.length === 0) {
+    return { ok: true as const };
+  }
+
+  if (ownerRows.length > 1) {
+    return {
+      ok: false as const,
+      message: "Este e-mail possui registros duplicados. Contate o suporte para regularizar.",
+    };
+  }
+
+  const ownerId = (ownerRows[0] as OwnerLookupRow).id;
+  const { data: existingAuthUser, error: authLookupError } = await supabase.auth.admin.getUserById(ownerId);
+
+  const authUserExists = Boolean(existingAuthUser?.user) && !authLookupError;
+  if (authUserExists) {
+    return { ok: true as const };
+  }
+
+  const { count: petsCount, error: petsCountError } = await supabase
+    .from("pets")
+    .select("id", { head: true, count: "exact" })
+    .eq("owner_id", ownerId);
+
+  if (petsCountError) {
+    return {
+      ok: false as const,
+      message: petsCountError.message || "Falha ao validar pets do tutor.",
+    };
+  }
+
+  const { count: tagsCount, error: tagsCountError } = await supabase
+    .from("nfc_tags")
+    .select("id", { head: true, count: "exact" })
+    .eq("owner_id", ownerId);
+
+  if (tagsCountError) {
+    return {
+      ok: false as const,
+      message: tagsCountError.message || "Falha ao validar tags do tutor.",
+    };
+  }
+
+  if ((petsCount ?? 0) > 0 || (tagsCount ?? 0) > 0) {
+    return {
+      ok: false as const,
+      message:
+        "Seu e-mail esta vinculado a um cadastro incompleto com dados ativos. Fale com o suporte para regularizar.",
+    };
+  }
+
+  const { error: deleteOwnerError } = await supabase.from("owners").delete().eq("id", ownerId);
+  if (deleteOwnerError) {
+    return {
+      ok: false as const,
+      message: deleteOwnerError.message || "Falha ao limpar cadastro incompleto do e-mail.",
+    };
+  }
+
+  return { ok: true as const };
 }
 
 function createSupabaseAnonAuthClient() {
@@ -206,6 +289,17 @@ export async function POST(request: Request) {
   }
 
   const supabase = createSupabaseServerClient();
+
+  const orphanCleanup = await cleanupOrphanOwnerByEmail(supabase, email);
+  if (!orphanCleanup.ok) {
+    return NextResponse.json(
+      {
+        ok: false,
+        message: orphanCleanup.message,
+      },
+      { status: 409 },
+    );
+  }
 
   const { data: tagRows, error: tagLookupError } = await supabase
     .from("nfc_tags")
