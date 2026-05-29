@@ -347,7 +347,7 @@ export default function LoginPage() {
     }
 
     if (!activationCode.trim()) {
-      setFeedback("Informe a chave de ativacao enviada com sua tag NFC.");
+      setFeedback("Informe a chave de ativacao de 6 caracteres enviada com sua tag NFC.");
       return;
     }
 
@@ -619,7 +619,8 @@ export default function LoginPage() {
                 type="text"
                 value={activationCode}
                 onChange={(event) => setActivationCode(event.target.value.toUpperCase())}
-                placeholder="Ex: ACT-9021"
+                placeholder="Ex: A1B2C3"
+                maxLength={6}
                 className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition placeholder:text-zinc-500 focus:border-cyan-300/60 focus:bg-white/10"
               />
             </label>

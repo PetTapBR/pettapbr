@@ -22,6 +22,11 @@ interface NfcTagLookupRow {
   status: "unlinked" | "active" | "disabled";
 }
 
+interface SupabaseErrorLike {
+  message?: string;
+  code?: string;
+}
+
 function normalizeActivationCode(value: string | undefined) {
   return (value ?? "").trim().toUpperCase();
 }
@@ -44,6 +49,30 @@ function isMissingColumnError(error: unknown) {
   }
 
   return message.includes("column") && message.includes("schema cache");
+}
+
+function isDuplicateEmailOwnerError(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const candidate = error as SupabaseErrorLike;
+  const code = typeof candidate.code === "string" ? candidate.code : "";
+  const message = typeof candidate.message === "string" ? candidate.message.toLowerCase() : "";
+
+  return code === "23505" && message.includes("owners_email_key");
+}
+
+function isOwnerForeignKeyClaimError(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const candidate = error as SupabaseErrorLike;
+  const code = typeof candidate.code === "string" ? candidate.code : "";
+  const message = typeof candidate.message === "string" ? candidate.message.toLowerCase() : "";
+
+  return code === "23503" && message.includes("nfc_tags_owner_id_fkey");
 }
 
 function createSupabaseAnonAuthClient() {
@@ -131,6 +160,16 @@ export async function POST(request: Request) {
       {
         ok: false,
         message: "Preencha nome, e-mail, senha e chave de ativacao.",
+      },
+      { status: 400 },
+    );
+  }
+
+  if (!/^[A-Z0-9]{6}$/.test(activationCode)) {
+    return NextResponse.json(
+      {
+        ok: false,
+        message: "Chave de ativacao invalida. Use os 6 caracteres enviados com a tag.",
       },
       { status: 400 },
     );
@@ -333,6 +372,17 @@ export async function POST(request: Request) {
   if (ownerError) {
     await rollbackOwnerRow();
     await rollbackAuthUser();
+
+    if (isDuplicateEmailOwnerError(ownerError)) {
+      return NextResponse.json(
+        {
+          ok: false,
+          message: "Este e-mail ja esta cadastrado. Tente entrar ou recuperar sua senha.",
+        },
+        { status: 409 },
+      );
+    }
+
     return NextResponse.json(
       {
         ok: false,
@@ -342,7 +392,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const { data: claimedRows, error: claimError } = await supabase
+  let { data: claimedRows, error: claimError } = await supabase
     .from("nfc_tags")
     .update({
       owner_id: authUser.id,
@@ -352,6 +402,40 @@ export async function POST(request: Request) {
     .is("owner_id", null)
     .select("id")
     .limit(1);
+
+  if (claimError && isOwnerForeignKeyClaimError(claimError)) {
+    // Self-healing for legacy environments where owner row may not have persisted.
+    const recoveryPayload = {
+      id: authUser.id,
+      full_name: fullName,
+      email,
+      password_hash: "__SUPABASE_AUTH__",
+      created_at: authUser.created_at ?? nowIso,
+      lgpd_consent_at: nowIso,
+      lgpd_consent_version: PRIVACY_VERSION,
+      lgpd_consent_ip: requestIp,
+    };
+
+    const recoveryResult = await supabase.from("owners").upsert(recoveryPayload, {
+      onConflict: "id",
+    });
+
+    if (!recoveryResult.error) {
+      const retryClaim = await supabase
+        .from("nfc_tags")
+        .update({
+          owner_id: authUser.id,
+          updated_at: nowIso,
+        })
+        .eq("id", selectedTag.id)
+        .is("owner_id", null)
+        .select("id")
+        .limit(1);
+
+      claimedRows = retryClaim.data;
+      claimError = retryClaim.error;
+    }
+  }
 
   if (claimError) {
     await rollbackOwnerRow();

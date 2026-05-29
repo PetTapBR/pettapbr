@@ -60,8 +60,19 @@ function isDuplicateConstraint(errorMessage: string, constraint: string) {
   );
 }
 
+function randomActivationChars(length: number) {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  let output = "";
+
+  for (let index = 0; index < length; index += 1) {
+    output += alphabet[randomInt(0, alphabet.length)];
+  }
+
+  return output;
+}
+
 function generateActivationCode() {
-  return `ACT-${randomInt(100000, 1000000)}`;
+  return randomActivationChars(6);
 }
 
 async function generateNextTagCode() {
@@ -227,11 +238,11 @@ export async function POST(request: Request) {
     );
   }
 
-  if (requestedActivationCode && !/^[A-Z0-9-]{4,64}$/.test(requestedActivationCode)) {
+  if (requestedActivationCode && !/^[A-Z0-9]{6}$/.test(requestedActivationCode)) {
     return NextResponse.json(
       {
         ok: false,
-        message: "Chave de ativacao invalida.",
+        message: "Chave de ativacao invalida. Use exatamente 6 caracteres (A-Z e 0-9).",
       },
       { status: 400 },
     );

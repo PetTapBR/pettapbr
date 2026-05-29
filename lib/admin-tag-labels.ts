@@ -55,12 +55,7 @@ function randomActivationBlock(length: number) {
 }
 
 export function generateActivationCode() {
-  return [
-    randomActivationBlock(4),
-    randomActivationBlock(4),
-    randomActivationBlock(4),
-    randomActivationBlock(4),
-  ].join("-");
+  return randomActivationBlock(6);
 }
 
 function drawLabelCard(

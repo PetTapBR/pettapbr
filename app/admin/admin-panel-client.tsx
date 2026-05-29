@@ -343,8 +343,9 @@ export function AdminPanelClient() {
             <input
               type="text"
               value={activationCodeInput}
-              onChange={(event) => setActivationCodeInput(event.target.value)}
-              placeholder="Ex: ACT-9021"
+              onChange={(event) => setActivationCodeInput(event.target.value.toUpperCase())}
+              placeholder="Ex: A1B2C3"
+              maxLength={6}
               className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition placeholder:text-zinc-500 focus:border-cyan-300/60 focus:bg-white/10"
             />
           </label>
