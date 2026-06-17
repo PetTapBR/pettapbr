@@ -1,5 +1,7 @@
 import { randomInt } from "crypto";
-import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
+import { existsSync, readFileSync } from "fs";
+import path from "path";
+import { PDFDocument, StandardFonts, rgb, type PDFImage, type PDFFont, type PDFPage } from "pdf-lib";
 
 export interface LabelPdfItem {
   code: string;
@@ -8,6 +10,48 @@ export interface LabelPdfItem {
 }
 
 const DEFAULT_DOMAIN = "pettapbr.com.br";
+const CUSTOM_TAG_MESSAGE = "Quer sua tag personalizada com nome do seu pet?";
+const CUSTOM_TAG_CONTACT = "Entre em contato com (21) 99277-2414";
+
+function readLogoAsset() {
+  const candidates = [
+    path.join(process.cwd(), "public", "logo.jpg"),
+    path.join(process.cwd(), "public", "logo.png"),
+    path.join(process.cwd(), "logo.jpg"),
+    path.join(process.cwd(), "logo.png"),
+  ];
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return {
+        bytes: readFileSync(candidate),
+        extension: path.extname(candidate).toLowerCase(),
+      };
+    }
+  }
+
+  return null;
+}
+
+function drawCenteredText(
+  page: PDFPage,
+  text: string,
+  left: number,
+  width: number,
+  y: number,
+  size: number,
+  font: PDFFont,
+  color: ReturnType<typeof rgb>,
+) {
+  const textWidth = font.widthOfTextAtSize(text, size);
+  page.drawText(text, {
+    x: left + (width - textWidth) / 2,
+    y,
+    size,
+    font,
+    color,
+  });
+}
 
 export function sanitizeDomain(value: string | undefined) {
   const raw = (value ?? "").trim().toLowerCase();
@@ -66,6 +110,7 @@ function drawLabelCard(
   width: number,
   height: number,
   fonts: { regular: PDFFont; bold: PDFFont },
+  logo: PDFImage | null,
 ) {
   page.drawRectangle({
     x: left,
@@ -76,20 +121,21 @@ function drawLabelCard(
     borderWidth: 1,
   });
 
-  const title = "PetTapBR";
-  const titleSize = 18;
-  const titleWidth = fonts.bold.widthOfTextAtSize(title, titleSize);
-  page.drawText(title, {
-    x: left + (width - titleWidth) / 2,
-    y: bottom + height - 30,
-    size: titleSize,
-    font: fonts.bold,
-    color: rgb(0.06, 0.58, 0.24),
-  });
+  if (logo) {
+    const scaledLogo = logo.scaleToFit(width - 132, 34);
+    page.drawImage(logo, {
+      x: left + (width - scaledLogo.width) / 2,
+      y: bottom + height - 40,
+      width: scaledLogo.width,
+      height: scaledLogo.height,
+    });
+  } else {
+    drawCenteredText(page, "PetTapBR", left, width, bottom + height - 30, 18, fonts.bold, rgb(0.06, 0.58, 0.24));
+  }
 
   page.drawText("Chave de Ativacao:", {
     x: left + 14,
-    y: bottom + height - 58,
+    y: bottom + height - 62,
     size: 11,
     font: fonts.bold,
     color: rgb(0.22, 0.22, 0.22),
@@ -97,15 +143,15 @@ function drawLabelCard(
 
   page.drawText(label.activationCode, {
     x: left + 14,
-    y: bottom + height - 80,
+    y: bottom + height - 84,
     size: 13,
     font: fonts.bold,
     color: rgb(0.1, 0.1, 0.1),
   });
 
   page.drawLine({
-    start: { x: left + 12, y: bottom + height - 90 },
-    end: { x: left + width - 12, y: bottom + height - 90 },
+    start: { x: left + 12, y: bottom + height - 94 },
+    end: { x: left + width - 12, y: bottom + height - 94 },
     thickness: 0.9,
     color: rgb(0.78, 0.78, 0.78),
   });
@@ -126,17 +172,48 @@ function drawLabelCard(
     color: rgb(0.1, 0.1, 0.1),
   });
 
+  page.drawRectangle({
+    x: left + 12,
+    y: bottom + 16,
+    width: width - 24,
+    height: 24,
+    color: rgb(0.94, 0.98, 0.95),
+    borderColor: rgb(0.76, 0.87, 0.79),
+    borderWidth: 0.7,
+  });
+
+  drawCenteredText(
+    page,
+    CUSTOM_TAG_MESSAGE,
+    left,
+    width,
+    bottom + 31,
+    8.1,
+    fonts.regular,
+    rgb(0.19, 0.29, 0.21),
+  );
+  drawCenteredText(
+    page,
+    CUSTOM_TAG_CONTACT,
+    left,
+    width,
+    bottom + 20,
+    8.4,
+    fonts.bold,
+    rgb(0.06, 0.43, 0.19),
+  );
+
   page.drawLine({
-    start: { x: left + 12, y: bottom + 22 },
-    end: { x: left + width - 12, y: bottom + 22 },
+    start: { x: left + 12, y: bottom + 12 },
+    end: { x: left + width - 12, y: bottom + 12 },
     thickness: 0.8,
     color: rgb(0.82, 0.82, 0.82),
   });
 
   page.drawText(label.siteDomain, {
     x: left + 14,
-    y: bottom + 8,
-    size: 9.2,
+    y: bottom + 1,
+    size: 8.7,
     font: fonts.regular,
     color: rgb(0.18, 0.18, 0.18),
   });
@@ -146,6 +223,13 @@ export async function buildLabelsPdfBuffer(labels: LabelPdfItem[]) {
   const pdfDoc = await PDFDocument.create();
   const regular = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  const logoAsset = readLogoAsset();
+  const logo =
+    logoAsset?.extension === ".png"
+      ? await pdfDoc.embedPng(logoAsset.bytes)
+      : logoAsset?.extension === ".jpg" || logoAsset?.extension === ".jpeg"
+        ? await pdfDoc.embedJpg(logoAsset.bytes)
+        : null;
 
   const pageWidth = 595.28; // A4
   const pageHeight = 841.89; // A4
@@ -155,7 +239,7 @@ export async function buildLabelsPdfBuffer(labels: LabelPdfItem[]) {
   const gapY = 12;
   const columns = 2;
   const labelWidth = (pageWidth - marginX * 2 - gapX) / columns;
-  const labelHeight = 170;
+  const labelHeight = 184;
   const rowsPerPage = Math.max(1, Math.floor((pageHeight - marginY * 2 + gapY) / (labelHeight + gapY)));
   const labelsPerPage = rowsPerPage * columns;
 
@@ -177,7 +261,7 @@ export async function buildLabelsPdfBuffer(labels: LabelPdfItem[]) {
     drawLabelCard(page, labels[index], left, bottom, labelWidth, labelHeight, {
       regular,
       bold,
-    });
+    }, logo);
   }
 
   return await pdfDoc.save();
