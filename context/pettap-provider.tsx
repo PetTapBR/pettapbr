@@ -94,6 +94,7 @@ interface PetTapContextValue {
   refreshCurrentOwner: () => Promise<void>;
   addPet: (payload: PetFormSubmission) => Promise<{ ok: boolean; petId?: string; message?: string }>;
   updatePet: (petId: string, payload: PetFormSubmission) => Promise<AuthResult>;
+  deletePet: (petId: string) => Promise<AuthResult>;
   updatePetStatus: (petId: string, status: PetStatus, reward?: string) => Promise<AuthResult>;
   updateCurrentOwnerPlan: (tier: PlanTier) => Promise<AuthResult>;
   updateCurrentOwnerAlertSettings: (settings: Partial<OwnerAlertSettings>) => Promise<AuthResult>;
@@ -1698,6 +1699,63 @@ function usePetTapValue() {
     [currentOwner, notifyNearbyTutorsAboutLostPet, state.pets],
   );
 
+  const deletePet = useCallback(
+    async (petId: string): Promise<AuthResult> => {
+      const target = state.pets.find((pet) => pet.id === petId);
+
+      if (!target) {
+        return {
+          ok: false,
+          message: "Pet nao encontrado.",
+        };
+      }
+
+      if (!currentOwner || target.ownerId !== currentOwner.id) {
+        return {
+          ok: false,
+          message: "Sem permissao para excluir este pet.",
+        };
+      }
+
+      if (supabase) {
+        const response = await authFetch(`/api/pets/${encodeURIComponent(petId)}`, {
+          method: "DELETE",
+        });
+        const payload = (await response.json()) as AuthResult;
+
+        if (!response.ok || !payload.ok) {
+          return {
+            ok: false,
+            message: payload.message ?? "Falha ao excluir pet.",
+          };
+        }
+      }
+
+      setState((prev) => ({
+        ...prev,
+        pets: prev.pets.filter((pet) => pet.id !== petId),
+        nfcTags: prev.nfcTags.map((tag) =>
+          tag.petId === petId
+            ? {
+                ...tag,
+                petId: null,
+                status: "unlinked",
+                updatedAt: new Date().toISOString(),
+              }
+            : tag,
+        ),
+        scanEvents: prev.scanEvents.filter((event) => event.petId !== petId),
+        notifications: prev.notifications.filter((notification) => notification.petId !== petId),
+      }));
+
+      return {
+        ok: true,
+        message: "Perfil do pet excluido com sucesso.",
+      };
+    },
+    [currentOwner, state.pets],
+  );
+
   const getPetById = useCallback(
     (petId: string) => state.pets.find((pet) => pet.id === petId),
     [state.pets],
@@ -2152,6 +2210,7 @@ function usePetTapValue() {
     updateCurrentOwnerAlertSettings,
     addPet,
     updatePet,
+    deletePet,
     updatePetStatus,
     getPetById,
     getPetBySlug,

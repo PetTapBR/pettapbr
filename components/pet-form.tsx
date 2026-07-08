@@ -62,12 +62,14 @@ function InputField({
   onChange,
   placeholder,
   type = "text",
+  hasError = false,
 }: {
   label: string;
   value: string;
   onChange: (next: string) => void;
   placeholder?: string;
   type?: "text";
+  hasError?: boolean;
 }) {
   return (
     <label className="grid gap-2 text-sm text-zinc-300">
@@ -77,7 +79,10 @@ function InputField({
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
-        className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition placeholder:text-zinc-500 focus:border-cyan-300/60 focus:bg-white/10"
+        className={[
+          "rounded-2xl border bg-white/5 px-4 py-3 text-sm text-white outline-none transition placeholder:text-zinc-500 focus:bg-white/10",
+          hasError ? "border-rose-400/80 focus:border-rose-300" : "border-white/10 focus:border-cyan-300/60",
+        ].join(" ")}
       />
     </label>
   );
@@ -88,11 +93,13 @@ function TextareaField({
   value,
   onChange,
   placeholder,
+  hasError = false,
 }: {
   label: string;
   value: string;
   onChange: (next: string) => void;
   placeholder?: string;
+  hasError?: boolean;
 }) {
   return (
     <label className="grid gap-2 text-sm text-zinc-300">
@@ -101,7 +108,10 @@ function TextareaField({
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
-        className="min-h-24 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition placeholder:text-zinc-500 focus:border-cyan-300/60 focus:bg-white/10"
+        className={[
+          "min-h-24 rounded-2xl border bg-white/5 px-4 py-3 text-sm text-white outline-none transition placeholder:text-zinc-500 focus:bg-white/10",
+          hasError ? "border-rose-400/80 focus:border-rose-300" : "border-white/10 focus:border-cyan-300/60",
+        ].join(" ")}
       />
     </label>
   );
@@ -109,6 +119,10 @@ function TextareaField({
 
 const OTHER_CITY_OPTION = "__other_city__";
 const OTHER_BREED_OPTION = "__other_breed__";
+
+type PetFormErrorKey = "name" | "contact" | "state" | "city" | "avatar" | "location";
+
+type PetFormErrors = Partial<Record<PetFormErrorKey, string>>;
 
 interface ParsedCityValue {
   stateCode: string;
@@ -229,6 +243,14 @@ function getFlagIconUrl(countryCode: string) {
   return `https://flagcdn.com/20x15/${countryCode.toLowerCase()}.png`;
 }
 
+function errorBorderClass(hasError: boolean) {
+  return hasError ? "border-rose-400/80 focus:border-rose-300" : "border-white/10 focus:border-cyan-300/60";
+}
+
+function passiveErrorBorderClass(hasError: boolean) {
+  return hasError ? "border-rose-400/80" : "border-white/10";
+}
+
 export function PetForm({
   title,
   subtitle,
@@ -268,6 +290,8 @@ export function PetForm({
   const [photoFiles, setPhotoFiles] = useState<File[]>([]);
   const [videoFiles, setVideoFiles] = useState<File[]>([]);
   const [feedback, setFeedback] = useState<string>("");
+  const [validationErrors, setValidationErrors] = useState<PetFormErrors>({});
+  const [showPublicProfileReminder, setShowPublicProfileReminder] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isResolvingAddress, setIsResolvingAddress] = useState(false);
   const [isRequestingLocation, setIsRequestingLocation] = useState(false);
@@ -276,6 +300,7 @@ export function PetForm({
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const photoInputRef = useRef<HTMLInputElement | null>(null);
   const videoInputRef = useRef<HTMLInputElement | null>(null);
+  const publicProfileReminderRef = useRef<HTMLDivElement | null>(null);
   const selectedCityRef = useRef(selectedCity);
   const countryMenuRef = useRef<HTMLDivElement | null>(null);
 
@@ -293,7 +318,6 @@ export function PetForm({
     () => COUNTRY_DIAL_OPTIONS.find((country) => country.code === whatsappCountryCode) ?? COUNTRY_DIAL_OPTIONS[0],
     [whatsappCountryCode],
   );
-  selectedCityRef.current = selectedCity;
 
   const avatarPreview = useMemo(() => {
     if (avatarFile) {
@@ -314,6 +338,18 @@ export function PetForm({
       }
     };
   }, [avatarPreview]);
+
+  useEffect(() => {
+    selectedCityRef.current = selectedCity;
+  }, [selectedCity]);
+
+  useEffect(() => {
+    if (!showPublicProfileReminder) {
+      return;
+    }
+
+    publicProfileReminderRef.current?.focus();
+  }, [showPublicProfileReminder]);
 
   useEffect(() => {
     if (!isCountryMenuOpen) {
@@ -390,7 +426,10 @@ export function PetForm({
         ) {
           setSelectedCity(OTHER_CITY_OPTION);
           setCustomCity(currentSelectedCity);
-          updateField("city", formatCityValue(selectedStateCode, currentSelectedCity));
+          setValues((prev) => ({
+            ...prev,
+            city: formatCityValue(selectedStateCode, currentSelectedCity),
+          }));
         }
       } catch {
         if (!isMounted) {
@@ -417,6 +456,30 @@ export function PetForm({
       ...prev,
       [key]: value,
     }));
+
+    if (key === "name" && String(value).trim()) {
+      clearValidationError("name");
+    }
+
+    if (key === "phone" && String(value).trim()) {
+      clearValidationError("contact");
+    }
+
+    if ((key === "locationLat" || key === "locationLng") && value !== null) {
+      clearValidationError("location");
+    }
+  }
+
+  function clearValidationError(key: PetFormErrorKey) {
+    setValidationErrors((prev) => {
+      if (!prev[key]) {
+        return prev;
+      }
+
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
   }
 
   function applyWhatsappValue(countryCode: string, localNumber: string) {
@@ -434,6 +497,9 @@ export function PetForm({
     const normalizedNumber = sanitizePhoneInput(nextNumber);
     setWhatsappLocalNumber(normalizedNumber);
     applyWhatsappValue(whatsappCountryCode, normalizedNumber);
+    if (normalizedNumber) {
+      clearValidationError("contact");
+    }
   }
 
   function handleStateChange(nextStateCode: string) {
@@ -441,6 +507,9 @@ export function PetForm({
     setSelectedCity("");
     setCustomCity("");
     updateField("city", "");
+    if (nextStateCode) {
+      clearValidationError("state");
+    }
   }
 
   function handleCityChange(nextCity: string) {
@@ -453,11 +522,17 @@ export function PetForm({
 
     setCustomCity("");
     updateField("city", formatCityValue(selectedStateCode, nextCity));
+    if (nextCity) {
+      clearValidationError("city");
+    }
   }
 
   function handleCustomCityChange(nextCity: string) {
     setCustomCity(nextCity);
     updateField("city", formatCityValue(selectedStateCode, nextCity));
+    if (nextCity.trim()) {
+      clearValidationError("city");
+    }
   }
 
   function handleBreedChange(nextBreed: string) {
@@ -622,41 +697,53 @@ export function PetForm({
     setExistingGallery((prev) => prev.filter((item) => item.id !== mediaId));
   }
 
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
+  function validateRequiredFields() {
     const mainContact = (values.whatsapp || values.phone).trim();
+    const nextErrors: PetFormErrors = {};
 
-    if (!values.name.trim() || !mainContact) {
-      setFeedback("Preencha nome do pet e um contato principal.");
-      return;
+    if (!values.name.trim()) {
+      nextErrors.name = "Informe o nome do pet.";
     }
 
-    if (isPremium && !values.city.trim()) {
-      setFeedback("Preencha a cidade do pet.");
-      return;
+    if (!mainContact) {
+      nextErrors.contact = "Informe um WhatsApp ou contato principal.";
     }
 
     if (isPremium && !selectedStateCode) {
-      setFeedback("Selecione o estado do pet.");
-      return;
+      nextErrors.state = "Selecione o estado do pet.";
+    }
+
+    if (isPremium && !values.city.trim()) {
+      nextErrors.city = "Selecione ou digite a cidade do pet.";
     }
 
     if (!avatarFile && !existingAvatarUrl) {
-      setFeedback("Envie uma foto principal do pet.");
-      return;
+      nextErrors.avatar = "Envie uma foto principal do pet.";
     }
 
     if (isPremium && (values.locationLat === null || values.locationLng === null)) {
-      setFeedback("Selecione a localizacao no mapa ou use sua localizacao atual.");
-      return;
+      nextErrors.location = "Selecione a localizacao no mapa ou use sua localizacao atual.";
     }
+
+    setValidationErrors(nextErrors);
+
+    const missingItems = Object.values(nextErrors);
+    if (missingItems.length > 0) {
+      setFeedback(`Revise os campos obrigatorios: ${missingItems.join(" ")}`);
+      return false;
+    }
+
+    return true;
+  }
+
+  async function submitPetForm(nextValues: PetFormValues = values) {
+    setShowPublicProfileReminder(false);
 
     setIsSubmitting(true);
     setFeedback("Enviando arquivos e salvando perfil...");
 
     const result = await onSubmit({
-      values,
+      values: nextValues,
       avatarFile,
       existingAvatarUrl,
       photoFiles,
@@ -688,6 +775,31 @@ export function PetForm({
     setFeedback(result.message ?? "Nao foi possivel salvar.");
   }
 
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!validateRequiredFields()) {
+      return;
+    }
+
+    if (!values.isPublicProfile) {
+      setShowPublicProfileReminder(true);
+      return;
+    }
+
+    await submitPetForm();
+  }
+
+  async function makePublicAndSubmit() {
+    const nextValues = {
+      ...values,
+      isPublicProfile: true,
+    };
+
+    setValues(nextValues);
+    await submitPetForm(nextValues);
+  }
+
   return (
     <section className="rounded-3xl border border-white/10 bg-white/5 p-5 shadow-2xl shadow-black/40 backdrop-blur-xl sm:p-8">
       <header className="mb-6">
@@ -702,6 +814,7 @@ export function PetForm({
             value={values.name}
             onChange={(value) => updateField("name", value)}
             placeholder="Ex: Luna"
+            hasError={Boolean(validationErrors.name)}
           />
 
           {isPremium ? (
@@ -760,7 +873,10 @@ export function PetForm({
               <select
                 value={selectedStateCode}
                 onChange={(event) => handleStateChange(event.target.value)}
-                className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-300/60 focus:bg-white/10"
+                className={[
+                  "rounded-2xl border bg-white/5 px-4 py-3 text-sm text-white outline-none transition focus:bg-white/10",
+                  errorBorderClass(Boolean(validationErrors.state)),
+                ].join(" ")}
               >
                 <option value="" className="bg-zinc-900 text-white">
                   Selecione o estado
@@ -781,7 +897,10 @@ export function PetForm({
                 value={selectedCity}
                 disabled={!selectedStateCode || isLoadingCities}
                 onChange={(event) => handleCityChange(event.target.value)}
-                className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition disabled:cursor-not-allowed disabled:opacity-60 focus:border-cyan-300/60 focus:bg-white/10"
+                className={[
+                  "rounded-2xl border bg-white/5 px-4 py-3 text-sm text-white outline-none transition disabled:cursor-not-allowed disabled:opacity-60 focus:bg-white/10",
+                  errorBorderClass(Boolean(validationErrors.city)),
+                ].join(" ")}
               >
                 <option value="" className="bg-zinc-900 text-white">
                   {!selectedStateCode
@@ -807,7 +926,10 @@ export function PetForm({
                   value={customCity}
                   onChange={(event) => handleCustomCityChange(event.target.value)}
                   placeholder="Digite a cidade"
-                  className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition placeholder:text-zinc-500 focus:border-cyan-300/60 focus:bg-white/10"
+                  className={[
+                    "rounded-2xl border bg-white/5 px-4 py-3 text-sm text-white outline-none transition placeholder:text-zinc-500 focus:bg-white/10",
+                    errorBorderClass(Boolean(validationErrors.city)),
+                  ].join(" ")}
                 />
               ) : null}
               {cityFetchFeedback ? <p className="text-xs text-amber-200">{cityFetchFeedback}</p> : null}
@@ -824,9 +946,17 @@ export function PetForm({
               onChange={(event) => {
                 const file = event.target.files?.[0] ?? null;
                 setAvatarFile(file);
+                if (file) {
+                  clearValidationError("avatar");
+                }
               }}
             />
-            <div className="flex min-w-0 items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-3 py-2">
+            <div
+              className={[
+                "flex min-w-0 items-center gap-2 rounded-2xl border bg-white/5 px-3 py-2",
+                passiveErrorBorderClass(Boolean(validationErrors.avatar)),
+              ].join(" ")}
+            >
               <button
                 type="button"
                 onClick={() => openFileDialog(avatarInputRef)}
@@ -874,7 +1004,10 @@ export function PetForm({
                 <button
                   type="button"
                   onClick={() => setIsCountryMenuOpen((prev) => !prev)}
-                  className="flex w-full items-center justify-between gap-2 rounded-2xl border border-white/10 bg-white/5 px-3 py-3 text-sm text-white outline-none transition hover:bg-white/10 focus:border-cyan-300/60"
+                  className={[
+                    "flex w-full items-center justify-between gap-2 rounded-2xl border bg-white/5 px-3 py-3 text-sm text-white outline-none transition hover:bg-white/10",
+                    errorBorderClass(Boolean(validationErrors.contact)),
+                  ].join(" ")}
                 >
                   <span className="flex min-w-0 items-center gap-2">
                     <img
@@ -929,7 +1062,10 @@ export function PetForm({
                 value={whatsappLocalNumber}
                 onChange={(event) => handleWhatsappNumberChange(event.target.value)}
                 placeholder="DDD + numero"
-                className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none transition placeholder:text-zinc-500 focus:border-cyan-300/60 focus:bg-white/10"
+                className={[
+                  "rounded-2xl border bg-white/5 px-4 py-3 text-sm text-white outline-none transition placeholder:text-zinc-500 focus:bg-white/10",
+                  errorBorderClass(Boolean(validationErrors.contact)),
+                ].join(" ")}
               />
             </div>
           </label>
@@ -998,7 +1134,12 @@ export function PetForm({
         </label>
 
         {isPremium ? (
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+          <div
+            className={[
+              "rounded-2xl border bg-white/5 p-4",
+              passiveErrorBorderClass(Boolean(validationErrors.location)),
+            ].join(" ")}
+          >
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
               <p className="text-xs uppercase tracking-[0.14em] text-zinc-300">
                 Selecione a localizacao no mapa
@@ -1157,6 +1298,16 @@ export function PetForm({
 
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm text-zinc-400">{feedback}</p>
+          {Object.values(validationErrors).length > 0 ? (
+            <div className="rounded-2xl border border-rose-400/60 bg-rose-500/10 p-4 text-sm text-rose-100">
+              <p className="font-semibold">Revise antes de salvar:</p>
+              <ul className="mt-2 grid gap-1">
+                {Object.values(validationErrors).map((message) => (
+                  <li key={message}>{message}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
           <button
             type="submit"
             disabled={isSubmitting}
@@ -1166,6 +1317,53 @@ export function PetForm({
           </button>
         </div>
       </form>
+
+      {showPublicProfileReminder ? (
+        <div className="fixed inset-0 z-[5000] grid place-items-center bg-black/70 px-4 backdrop-blur-sm">
+          <div
+            ref={publicProfileReminderRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="public-profile-reminder-title"
+            tabIndex={-1}
+            className="w-full max-w-lg rounded-3xl border border-cyan-300/40 bg-zinc-950 p-6 shadow-2xl shadow-black/60 outline-none ring-2 ring-cyan-300/35"
+          >
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-200">
+              Antes de salvar
+            </p>
+            <h2 id="public-profile-reminder-title" className="mt-3 text-2xl font-semibold text-white">
+              Perfil privado
+            </h2>
+            <p className="mt-3 text-sm leading-6 text-zinc-300">
+              Por seguranca, o perfil fica privado por padrao. Para quem tocar na tag NFC conseguir ver
+              o perfil do pet, deixe o perfil como publico antes de salvar.
+            </p>
+            <div className="mt-6 grid gap-3 sm:grid-cols-[1fr_auto]">
+              <button
+                type="button"
+                onClick={() => setShowPublicProfileReminder(false)}
+                className="rounded-full border border-white/15 px-5 py-3 text-sm font-semibold uppercase tracking-[0.12em] text-zinc-100 transition hover:bg-white/10"
+              >
+                Voltar e ajustar
+              </button>
+              <button
+                type="button"
+                onClick={() => void makePublicAndSubmit()}
+                className="rounded-full bg-cyan-300 px-5 py-3 text-sm font-semibold uppercase tracking-[0.12em] text-zinc-950 transition hover:bg-cyan-200"
+              >
+                Deixar publico e salvar
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => void submitPetForm()}
+              className="mt-3 w-full rounded-full border border-zinc-600/70 px-5 py-3 text-xs font-semibold uppercase tracking-[0.12em] text-zinc-300 transition hover:bg-white/5"
+            >
+              Salvar privado mesmo assim
+            </button>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

@@ -7,7 +7,7 @@ interface IbgeCityRow {
   nome?: string;
 }
 
-const REQUEST_TIMEOUT_MS = 9000;
+const REQUEST_TIMEOUT_MS = 20000;
 
 export async function GET(request: Request) {
   const rateLimit = consumeRateLimit({
@@ -52,7 +52,7 @@ export async function GET(request: Request) {
       `https://servicodados.ibge.gov.br/api/v1/localidades/estados/${uf}/municipios?orderBy=nome`,
       {
         next: {
-          revalidate: 60 * 60 * 24,
+          revalidate: 60 * 60 * 24 * 30,
         },
         signal: controller.signal,
       },
@@ -78,6 +78,7 @@ export async function GET(request: Request) {
       ok: true,
       uf,
       cities,
+      source: "ibge",
     });
   } catch {
     return NextResponse.json(
