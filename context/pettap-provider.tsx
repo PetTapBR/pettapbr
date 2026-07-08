@@ -1783,9 +1783,15 @@ function usePetTapValue() {
         };
       }
 
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => {
+        controller.abort();
+      }, 25000);
+
       try {
         const response = await authFetch("/api/tags/activate", {
           method: "POST",
+          signal: controller.signal,
           headers: {
             "Content-Type": "application/json",
           },
@@ -1826,10 +1832,20 @@ function usePetTapValue() {
           message: payloadResponse.message ?? "Tag ativada e vinculada com sucesso.",
         };
       } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return {
+            ok: false,
+            message:
+              "A vinculacao demorou mais que o esperado. Verifique sua conexao e tente novamente.",
+          };
+        }
+
         return {
           ok: false,
           message: error instanceof Error ? error.message : "Falha ao ativar tag NFC.",
         };
+      } finally {
+        window.clearTimeout(timeoutId);
       }
     },
     [currentOwner, state.pets],

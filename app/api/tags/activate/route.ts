@@ -20,8 +20,53 @@ interface TagRow {
   updated_at: string;
 }
 
+interface ActivateTagRpcRow {
+  ok: boolean;
+  status_code: number;
+  message: string;
+  id: string | null;
+  code: string | null;
+  owner_id: string | null;
+  pet_id: string | null;
+  status: "unlinked" | "active" | "disabled" | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
 function normalizeTagCode(value: string | undefined) {
   return (value ?? "").trim().toUpperCase();
+}
+
+function isMissingRpcError(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const candidate = error as { code?: unknown; message?: unknown };
+  const code = typeof candidate.code === "string" ? candidate.code : "";
+  const message = typeof candidate.message === "string" ? candidate.message.toLowerCase() : "";
+
+  return code === "PGRST202" || code === "42883" || message.includes("could not find the function");
+}
+
+function buildTagResponse(row: {
+  id: string;
+  code: string;
+  owner_id: string | null;
+  pet_id: string | null;
+  status: "unlinked" | "active" | "disabled";
+  created_at: string;
+  updated_at: string;
+}) {
+  return {
+    id: row.id,
+    code: row.code,
+    ownerId: row.owner_id,
+    petId: row.pet_id,
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }
 
 export async function POST(request: Request) {
@@ -89,6 +134,62 @@ export async function POST(request: Request) {
   }
 
   const supabase = createSupabaseServerClient();
+
+  const rpcResult = await supabase.rpc("activate_nfc_tag_for_pet", {
+    p_tag_code: tagCode,
+    p_pet_id: petId,
+    p_owner_id: ownerId,
+  });
+
+  if (!rpcResult.error) {
+    const rpcRow = Array.isArray(rpcResult.data)
+      ? (rpcResult.data[0] as ActivateTagRpcRow | undefined)
+      : (rpcResult.data as ActivateTagRpcRow | null);
+
+    if (!rpcRow) {
+      return NextResponse.json(
+        {
+          ok: false,
+          message: "Falha ao ativar tag NFC.",
+        },
+        { status: 500 },
+      );
+    }
+
+    if (!rpcRow.ok || !rpcRow.id || !rpcRow.code || !rpcRow.status || !rpcRow.created_at || !rpcRow.updated_at) {
+      return NextResponse.json(
+        {
+          ok: false,
+          message: rpcRow.message || "Falha ao ativar tag NFC.",
+        },
+        { status: rpcRow.status_code || 500 },
+      );
+    }
+
+    return NextResponse.json({
+      ok: true,
+      message: rpcRow.message || "Tag ativada e vinculada com sucesso.",
+      tag: buildTagResponse({
+        id: rpcRow.id,
+        code: rpcRow.code,
+        owner_id: rpcRow.owner_id,
+        pet_id: rpcRow.pet_id,
+        status: rpcRow.status,
+        created_at: rpcRow.created_at,
+        updated_at: rpcRow.updated_at,
+      }),
+    });
+  }
+
+  if (!isMissingRpcError(rpcResult.error)) {
+    return NextResponse.json(
+      {
+        ok: false,
+        message: rpcResult.error.message || "Falha ao ativar tag NFC.",
+      },
+      { status: 500 },
+    );
+  }
 
   const { data: petRows, error: petError } = await supabase
     .from("pets")
@@ -185,15 +286,15 @@ export async function POST(request: Request) {
     return NextResponse.json({
       ok: true,
       message: "Esta tag ja esta vinculada a este pet.",
-      tag: {
+      tag: buildTagResponse({
         id: tag.id,
         code: tag.code,
-        ownerId,
-        petId,
+        owner_id: ownerId,
+        pet_id: petId,
         status: tag.status,
-        createdAt: tag.created_at,
-        updatedAt: tag.updated_at,
-      },
+        created_at: tag.created_at,
+        updated_at: tag.updated_at,
+      }),
     });
   }
 
@@ -224,14 +325,6 @@ export async function POST(request: Request) {
   return NextResponse.json({
     ok: true,
     message: "Tag ativada e vinculada com sucesso.",
-    tag: {
-      id: updatedTag.id,
-      code: updatedTag.code,
-      ownerId: updatedTag.owner_id,
-      petId: updatedTag.pet_id,
-      status: updatedTag.status,
-      createdAt: updatedTag.created_at,
-      updatedAt: updatedTag.updated_at,
-    },
+    tag: buildTagResponse(updatedTag),
   });
 }

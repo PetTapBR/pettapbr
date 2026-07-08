@@ -281,8 +281,9 @@ export default function PublicNfcTagPage() {
       tagCode,
       activationCode: normalizedInputCode,
       petId: selectedPetId,
+    }).finally(() => {
+      setIsSubmitting(false);
     });
-    setIsSubmitting(false);
 
     if (!result.ok) {
       setFeedback(result.message ?? "Nao foi possivel ativar a tag.");
