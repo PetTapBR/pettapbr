@@ -691,7 +691,7 @@ export default function PlansPage() {
               </p>
             </div>
             <span className="rounded-full border border-white/15 px-3 py-1 text-xs uppercase tracking-[0.14em] text-zinc-300">
-              {isProPlan ? "Disponivel no Pro" : "Upgrade para Pro"}
+              Gratis para todos
             </span>
           </div>
 
@@ -778,7 +778,7 @@ export default function PlansPage() {
         <section className="rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur">
           <h3 className="text-xl font-semibold text-white">Alertas de pet perdido por proximidade</h3>
           <p className="mt-2 text-sm text-zinc-300">
-            Disponivel no Plano Pro para usuarios logados. Crie sua conta para ativar alertas por localizacao.
+            Disponivel para qualquer tutor cadastrado. Crie sua conta para ativar alertas por localizacao.
           </p>
           <div className="mt-4">
             <Link

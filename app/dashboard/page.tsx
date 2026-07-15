@@ -8,8 +8,9 @@ import { PushNotificationCard } from "@/components/push-notification-card";
 import { StatusPill } from "@/components/status-pill";
 import { usePetTap } from "@/context/pettap-provider";
 import { authFetch } from "@/lib/auth-client";
+import { reverseGeocodeLabel } from "@/lib/geocode-client";
 import { isOwnerPro } from "@/lib/owner-defaults";
-import { formatDateTime, normalizeTagCode } from "@/lib/utils";
+import { formatCoordinates, formatDateTime, normalizeTagCode } from "@/lib/utils";
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -22,6 +23,7 @@ export default function DashboardPage() {
     state,
     markNotificationRead,
     markAllNotificationsRead,
+    updateCurrentOwnerAlertSettings,
     updatePetStatus,
     getTagByPetId,
     getPetById,
@@ -41,12 +43,37 @@ export default function DashboardPage() {
   const [nfcLinkError, setNfcLinkError] = useState("");
   const [privacyFeedback, setPrivacyFeedback] = useState("");
   const [isSubmittingDeleteRequest, setIsSubmittingDeleteRequest] = useState(false);
+  const [alertFeedback, setAlertFeedback] = useState("");
+  const [isSavingAlertSettings, setIsSavingAlertSettings] = useState(false);
+  const [isRequestingAlertLocation, setIsRequestingAlertLocation] = useState(false);
+  const [alertDraft, setAlertDraft] = useState({
+    receiveLostAlerts: false,
+    radiusKm: 5,
+    locationLat: null as number | null,
+    locationLng: null as number | null,
+    locationLabel: "",
+  });
 
   useEffect(() => {
     if (isReady && !currentOwner) {
       router.push("/login");
     }
   }, [currentOwner, isReady, router]);
+
+  useEffect(() => {
+    if (!currentOwner) {
+      return;
+    }
+
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setAlertDraft({
+      receiveLostAlerts: currentOwner.alerts.receiveLostAlerts,
+      radiusKm: currentOwner.alerts.radiusKm,
+      locationLat: currentOwner.alerts.locationLat,
+      locationLng: currentOwner.alerts.locationLng,
+      locationLabel: currentOwner.alerts.locationLabel,
+    });
+  }, [currentOwner]);
 
   if (!isReady || !currentOwner) {
     return (
@@ -137,6 +164,82 @@ export default function DashboardPage() {
     }
   }
 
+  async function handleUseAlertLocation() {
+    if (!navigator.geolocation) {
+      setAlertFeedback("Geolocalizacao nao suportada neste navegador.");
+      return;
+    }
+
+    if (typeof window !== "undefined" && !window.isSecureContext) {
+      const host = window.location.hostname.toLowerCase();
+      const isLocalhost = host === "localhost" || host === "127.0.0.1" || host.endsWith(".localhost");
+      if (!isLocalhost) {
+        setAlertFeedback("Geolocalizacao exige HTTPS no celular.");
+        return;
+      }
+    }
+
+    setIsRequestingAlertLocation(true);
+    setAlertFeedback("Capturando sua localizacao...");
+
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const lat = position.coords.latitude;
+        const lng = position.coords.longitude;
+        const fallbackLabel = formatCoordinates(lat, lng);
+
+        setAlertDraft((prev) => ({
+          ...prev,
+          locationLat: lat,
+          locationLng: lng,
+          locationLabel: prev.locationLabel || fallbackLabel,
+        }));
+
+        const resolved = await reverseGeocodeLabel(lat, lng);
+        if (resolved) {
+          setAlertDraft((prev) => ({
+            ...prev,
+            locationLabel: resolved,
+          }));
+        }
+
+        setIsRequestingAlertLocation(false);
+        setAlertFeedback("Localizacao capturada. Agora salve para receber alertas proximos.");
+      },
+      () => {
+        setIsRequestingAlertLocation(false);
+        setAlertFeedback("Nao foi possivel obter sua localizacao. Verifique a permissao do navegador.");
+      },
+      {
+        enableHighAccuracy: true,
+        maximumAge: 30000,
+        timeout: 12000,
+      },
+    );
+  }
+
+  async function handleSaveAlertSettings() {
+    if (alertDraft.receiveLostAlerts && (alertDraft.locationLat === null || alertDraft.locationLng === null)) {
+      setAlertFeedback("Defina sua localizacao para receber alertas de pets perdidos proximos.");
+      return;
+    }
+
+    setIsSavingAlertSettings(true);
+    const result = await updateCurrentOwnerAlertSettings({
+      receiveLostAlerts: alertDraft.receiveLostAlerts,
+      radiusKm: alertDraft.radiusKm,
+      locationLat: alertDraft.locationLat,
+      locationLng: alertDraft.locationLng,
+      locationLabel: alertDraft.locationLabel,
+    });
+    setIsSavingAlertSettings(false);
+
+    setAlertFeedback(
+      result.message ??
+        (result.ok ? "Preferencias de alerta salvas com sucesso." : "Nao foi possivel salvar os alertas."),
+    );
+  }
+
   return (
     <div className="grid min-w-0 gap-6">
       <section className="min-w-0 w-full max-w-full rounded-[2rem] border border-white/10 bg-white/5 p-5 shadow-2xl shadow-black/40 backdrop-blur-xl sm:p-8">
@@ -203,8 +306,8 @@ export default function DashboardPage() {
 
       {!isProPlan ? (
         <section className="rounded-2xl border border-cyan-300/30 bg-cyan-500/10 p-4 text-sm text-cyan-100">
-          Plano Start ativo: voce pode manter perfis basicos (nome, foto e contato). Para liberar modo
-          perdido, galeria, dados medicos e alertas por proximidade, faca upgrade em Planos.
+          Plano Start ativo: voce pode manter perfis basicos e receber alertas de pets perdidos proximos.
+          Para disparar o modo perdido, liberar galeria e dados medicos, faca upgrade em Planos.
         </section>
       ) : null}
 
@@ -234,6 +337,114 @@ export default function DashboardPage() {
           </button>
           {privacyFeedback ? <p className="text-xs text-zinc-300">{privacyFeedback}</p> : null}
         </div>
+      </section>
+
+      <section className="rounded-3xl border border-cyan-300/25 bg-cyan-500/10 p-5 text-sm text-zinc-200 backdrop-blur sm:p-6">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-xs uppercase tracking-[0.14em] text-cyan-200">Rede de alerta</p>
+            <h2 className="mt-2 text-xl font-semibold tracking-tight text-white">
+              Receber pets perdidos perto de mim
+            </h2>
+            <p className="mt-1 text-sm text-cyan-50/85">
+              Qualquer tutor cadastrado pode receber aviso quando um pet perdido estiver no raio configurado.
+            </p>
+          </div>
+          <span className="rounded-full border border-cyan-200/35 bg-cyan-300/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-cyan-50">
+            Gratis para todos
+          </span>
+        </div>
+
+        <div className="mt-5 grid gap-4 sm:grid-cols-2">
+          <label className="flex items-center gap-3 rounded-2xl border border-white/10 bg-black/15 px-4 py-3">
+            <input
+              type="checkbox"
+              checked={alertDraft.receiveLostAlerts}
+              onChange={(event) =>
+                setAlertDraft((prev) => ({
+                  ...prev,
+                  receiveLostAlerts: event.target.checked,
+                }))
+              }
+              className="size-4 accent-cyan-400"
+            />
+            <span className="text-zinc-100">Quero receber notificacoes de pets perdidos proximos</span>
+          </label>
+
+          <label className="grid gap-2 text-zinc-300">
+            <span className="text-xs uppercase tracking-[0.14em] text-cyan-200">Raio de alerta (km)</span>
+            <input
+              type="number"
+              min={1}
+              max={50}
+              value={alertDraft.radiusKm}
+              onChange={(event) =>
+                setAlertDraft((prev) => ({
+                  ...prev,
+                  radiusKm: Math.min(50, Math.max(1, Number(event.target.value) || 5)),
+                }))
+              }
+              className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-white outline-none transition focus:border-cyan-300/60"
+            />
+          </label>
+        </div>
+
+        <div className="mt-4 grid gap-4 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
+          <button
+            type="button"
+            onClick={() => {
+              void handleUseAlertLocation();
+            }}
+            disabled={isRequestingAlertLocation}
+            className="rounded-full border border-cyan-300/40 bg-cyan-400/10 px-5 py-3 text-xs font-semibold uppercase tracking-[0.14em] text-cyan-50 transition hover:bg-cyan-400/20 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isRequestingAlertLocation ? "Localizando..." : "Usar minha localizacao atual"}
+          </button>
+
+          <label className="grid gap-2 text-zinc-300">
+            <span className="text-xs uppercase tracking-[0.14em] text-cyan-200">Referencia da localizacao</span>
+            <input
+              type="text"
+              value={alertDraft.locationLabel}
+              onChange={(event) =>
+                setAlertDraft((prev) => ({
+                  ...prev,
+                  locationLabel: event.target.value,
+                }))
+              }
+              placeholder="Ex: Centro, Sao Paulo"
+              className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-white outline-none transition placeholder:text-zinc-500 focus:border-cyan-300/60"
+            />
+          </label>
+        </div>
+
+        <p className="mt-3 text-xs text-cyan-50/75">
+          Coordenadas:{" "}
+          {alertDraft.locationLat !== null && alertDraft.locationLng !== null
+            ? formatCoordinates(alertDraft.locationLat, alertDraft.locationLng)
+            : "nao definidas"}
+        </p>
+
+        <div className="mt-5 flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={() => {
+              void handleSaveAlertSettings();
+            }}
+            disabled={isSavingAlertSettings}
+            className="rounded-full bg-white px-6 py-3 text-xs font-semibold uppercase tracking-[0.14em] text-zinc-950 transition hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isSavingAlertSettings ? "Salvando..." : "Salvar alertas"}
+          </button>
+          {alertFeedback ? <p className="text-sm text-cyan-50/90">{alertFeedback}</p> : null}
+        </div>
+
+        {!isProPlan ? (
+          <p className="mt-3 text-xs text-cyan-50/75">
+            Receber alertas fica liberado no Start. O plano Pro continua necessario para marcar seu pet
+            como perdido e disparar o aviso para a rede.
+          </p>
+        ) : null}
       </section>
 
       <section className="min-w-0 w-full max-w-full rounded-3xl border border-white/10 bg-white/5 p-5 backdrop-blur sm:p-6">
